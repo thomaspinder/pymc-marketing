@@ -1041,9 +1041,6 @@ def test_nuts_recovers_the_baseline(nuts_fitted_mmm, long_brand_mmm_data):
     assert error[:4].mean() < 2 * error[26:].mean()
 
 
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect.fitted_var is not implemented yet"
-)
 @pytest.mark.parametrize(
     "prepare",
     [
@@ -1067,9 +1064,6 @@ def test_fitted_var_before_fit_raises(brand_mmm_data, prepare):
         effect.fitted_var(mmm)
 
 
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect.fitted_var is not implemented yet"
-)
 @pytest.mark.parametrize(
     "effect_kwargs, match",
     [
@@ -1100,9 +1094,6 @@ def test_fitted_var_on_an_mmm_fitted_with_another_effect_raises(
         effect.fitted_var(fitted_mmm)
 
 
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect.fitted_var is not implemented yet"
-)
 def test_fitted_var_holds_the_var_parameters(fitted_mmm):
     """The VAR's parameters and the sampler statistics, without the baseline path.
 
@@ -1131,9 +1122,6 @@ def test_fitted_var_holds_the_var_parameters(fitted_mmm):
     assert "diverging" in fitted.idata.sample_stats
 
 
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect.fitted_var is not implemented yet"
-)
 def test_fitted_var_data_are_the_raw_brand_data_on_the_mmm_dates(shorter_mmm_data):
     """The baseline is its posterior mean path; the brand columns are not centered."""
     effect = make_effect(shorter_mmm_data["brand_data"])
@@ -1198,9 +1186,6 @@ def obs_potential(mmm: MMM) -> np.ndarray:
     return np.reshape(values, sizes)
 
 
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect.fitted_var is not implemented yet"
-)
 @pytest.mark.parametrize("lags", [1, 2])
 @pytest.mark.parametrize("exog_names", [["brand_spend"], []], ids=["exog", "no-exog"])
 def test_fitted_var_reproduces_the_mmm_graph(shorter_mmm_data, lags, exog_names):
@@ -1256,9 +1241,6 @@ def test_fitted_var_reproduces_the_mmm_graph(shorter_mmm_data, lags, exog_names)
     )
 
 
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect.fitted_var is not implemented yet"
-)
 def test_dynamic_multiplier_runs_on_the_fitted_var(fitted_mmm):
     """On impact, the multiplier is ``B_exog``, and a week later ``A_1 B_exog``."""
     posterior = fitted_mmm.idata.posterior
@@ -1288,9 +1270,6 @@ def true_cumulative_multiplier(horizon: int) -> float:
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect.fitted_var is not implemented yet"
-)
 def test_cumulative_multiplier_recovers_the_truth(nuts_fitted_mmm):
     """The 26-week cumulative multiplier of brand spend on the baseline is recovered.
 
@@ -1310,9 +1289,6 @@ def test_cumulative_multiplier_recovers_the_truth(nuts_fitted_mmm):
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect.fitted_var is not implemented yet"
-)
 def test_uncentering_maps_var_fit_on_centered_data_onto_var_fit_on_raw_data(
     brand_mmm_data,
 ):
