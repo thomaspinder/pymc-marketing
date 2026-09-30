@@ -24,9 +24,6 @@ import pytest
 from packaging.requirements import Requirement
 
 
-@pytest.mark.xfail(
-    strict=True, reason="pymc_marketing.mmm.var_baseline is not implemented yet"
-)
 def test_import_impulso_missing_raises(monkeypatch):
     """Without Impulso, the error names the extra and the install command."""
     from pymc_marketing.mmm.var_baseline import _import_impulso
@@ -99,9 +96,6 @@ def test_min_impulso_matches_the_pins(extra):
     assert str(specifier) == f">={_MIN_IMPULSO}"
 
 
-@pytest.mark.xfail(
-    strict=True, reason="pymc_marketing.mmm.var_baseline is not implemented yet"
-)
 def test_import_impulso_without_metadata_is_unchecked(monkeypatch):
     """An Impulso with no installed distribution, such as a source tree, is used."""
     from pymc_marketing.mmm.var_baseline import _import_impulso
@@ -116,9 +110,6 @@ def test_import_impulso_without_metadata_is_unchecked(monkeypatch):
     assert _import_impulso() is impulso
 
 
-@pytest.mark.xfail(
-    strict=True, reason="pymc_marketing.mmm.var_baseline is not implemented yet"
-)
 def test_pymc_marketing_imports_without_impulso():
     """Neither the package nor the effect's module needs Impulso at import time.
 
