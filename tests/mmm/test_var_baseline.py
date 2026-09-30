@@ -17,8 +17,22 @@ import subprocess
 import sys
 from importlib import metadata
 from types import ModuleType
+from unittest.mock import patch
 
+import numpy as np
+import pandas as pd
+import pymc as pm
 import pytest
+import xarray as xr
+from impulso import VAR, MinnesotaPrior, ar1_residual_sd
+from pydantic import ValidationError
+from pymc.testing import mock_sample
+
+from pymc_marketing.mmm import MMM, GeometricAdstock, LogisticSaturation
+
+seed: int = sum(map(ord, "VARBaselineEffect"))
+PREFIX = "brand_var"
+ENDOG_NAMES = ["baseline", "awareness", "consideration"]
 
 
 def test_import_impulso_missing_raises(monkeypatch):
@@ -81,3 +95,293 @@ def test_pymc_marketing_imports_without_impulso():
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def make_brand_mmm_data(n_weeks: int = 30) -> dict:
+    """Weekly sales whose baseline moves with consideration, and the brand data.
+
+    Awareness responds to brand spend, consideration to awareness, and the sales
+    baseline to consideration, each as an AR(1).
+    """
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2024-01-01", periods=n_weeks, freq="W-MON")
+    brand_spend = np.zeros(n_weeks)
+    brand_spend[5:10] = brand_spend[18:23] = 1.0
+    awareness, consideration, baseline = np.zeros((3, n_weeks))
+    for t in range(1, n_weeks):
+        awareness[t] = (
+            0.9 * awareness[t - 1] + 0.25 * brand_spend[t] + rng.normal(0, 0.04)
+        )
+        consideration[t] = (
+            0.8 * consideration[t - 1] + 0.4 * awareness[t - 1] + rng.normal(0, 0.03)
+        )
+        baseline[t] = (
+            0.5 * baseline[t - 1] + 0.6 * consideration[t - 1] + rng.normal(0, 0.04)
+        )
+
+    X = pd.DataFrame(
+        {
+            "date": dates,
+            "x1": rng.uniform(0, 1, n_weeks),
+            "x2": rng.uniform(0, 1, n_weeks),
+        }
+    )
+    y = pd.Series(
+        3.0 + baseline + 0.5 * X["x1"] + 0.3 * X["x2"] + rng.normal(0, 0.1, n_weeks),
+        name="sales",
+    )
+    brand_data = pd.DataFrame(
+        {
+            "date": dates,
+            "awareness": 1.0 + awareness,
+            "consideration": 0.5 + consideration,
+            "brand_spend": brand_spend,
+        }
+    )
+    return {"X": X, "y": y, "brand_data": brand_data}
+
+
+@pytest.fixture(scope="module")
+def brand_mmm_data() -> dict:
+    return make_brand_mmm_data()
+
+
+def make_effect(brand_data: pd.DataFrame, **kwargs):
+    from pymc_marketing.mmm import VARBaselineEffect
+
+    params = {
+        "brand_data": brand_data,
+        "baseline_name": "baseline",
+        "endog_names": ENDOG_NAMES,
+        "exog_names": ["brand_spend"],
+        "prefix": PREFIX,
+        "var": VAR(lags=1),
+    }
+    return VARBaselineEffect(**(params | kwargs))
+
+
+def make_mmm(effect) -> MMM:
+    return MMM(
+        date_column="date",
+        channel_columns=["x1", "x2"],
+        target_column="sales",
+        adstock=GeometricAdstock(l_max=2),
+        saturation=LogisticSaturation(),
+    ).add_mu_effect(effect)
+
+
+@pytest.fixture(scope="module")
+def fitted_mmm(brand_mmm_data) -> MMM:
+    mmm = make_mmm(make_effect(brand_mmm_data["brand_data"]))
+    # Patched for this fit only: the module-scoped `mock_pymc_sample` would stay
+    # active for the rest of the module and turn the slow NUTS test into prior
+    # draws.
+    with patch.object(pm, "sample", mock_sample):
+        mmm.fit(brand_mmm_data["X"], brand_mmm_data["y"], draws=20, random_seed=seed)
+    return mmm
+
+
+class OwnLagPrior:
+    """A lag-coefficient prior that is not a ``MinnesotaPrior``.
+
+    Every own first lag has prior mean 0.9.
+    """
+
+    def build_priors(
+        self, n_vars: int, n_lags: int, *, sigma: np.ndarray
+    ) -> dict[str, np.ndarray]:
+        B_mu = np.zeros((n_vars, n_vars * n_lags))
+        B_mu[:, :n_vars] = 0.9 * np.eye(n_vars)
+        return {"B_mu": B_mu, "B_sigma": np.full_like(B_mu, 0.1)}
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+def test_constructing_the_effect_without_impulso_raises(brand_mmm_data, monkeypatch):
+    spec = VAR(lags=1)
+    monkeypatch.setitem(sys.modules, "impulso", None)
+
+    with pytest.raises(ImportError, match=r"pip install 'pymc-marketing\[var\]'"):
+        make_effect(brand_mmm_data["brand_data"], var=spec)
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+def test_var_must_be_an_impulso_var_spec(brand_mmm_data):
+    with pytest.raises(TypeError, match=r"impulso\.VAR"):
+        make_effect(brand_mmm_data["brand_data"], var=MinnesotaPrior())
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+@pytest.mark.parametrize("baseline_own_lag_mean", [np.nan, 1.0, -1.0])
+def test_baseline_own_lag_mean_must_keep_the_baseline_stationary(
+    brand_mmm_data, baseline_own_lag_mean
+):
+    with pytest.raises(ValidationError, match="baseline_own_lag_mean"):
+        make_effect(
+            brand_mmm_data["brand_data"], baseline_own_lag_mean=baseline_own_lag_mean
+        )
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+def test_fit_adds_the_var_and_the_baseline_to_the_posterior(fitted_mmm):
+    posterior = fitted_mmm.idata.posterior
+    var_names = [
+        "B",
+        "B_exog",
+        "intercept",
+        "L",
+        "Sigma",
+        "tril_offdiag",
+        "latent_init",
+        "latent_innovations",
+        "latent",
+    ]
+
+    assert {f"{PREFIX}::{name}" for name in var_names} <= set(posterior.data_vars)
+    contribution = posterior[f"{PREFIX}_effect_contribution"]
+    assert contribution.dims == ("chain", "draw", "date")
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+def test_baseline_equation_has_no_intercept(fitted_mmm):
+    intercept = fitted_mmm.idata.posterior[f"{PREFIX}::intercept"]
+
+    assert intercept.coords["var_intercept"].values.tolist() == ENDOG_NAMES[1:]
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+def test_baseline_appears_in_the_contribution_decomposition(fitted_mmm):
+    """The decomposition shows the baseline, in sales units, under the effect's name."""
+    contributions = fitted_mmm.compute_mean_contributions_over_time()
+    baseline = fitted_mmm.idata.posterior[f"{PREFIX}::latent"].mean(("chain", "draw"))
+
+    assert f"{PREFIX}_effect" in contributions.columns
+    np.testing.assert_allclose(contributions[f"{PREFIX}_effect"], baseline.values[:, 0])
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+@pytest.mark.parametrize(
+    "prior, effect_kwargs, expected",
+    [
+        pytest.param("minnesota", {}, [0.0, 1.0, 1.0], id="shorthand"),
+        pytest.param(
+            MinnesotaPrior(own_lag_mean=0.5),
+            {"baseline_own_lag_mean": 0.3},
+            [0.3, 0.5, 0.5],
+            id="scalar",
+        ),
+        pytest.param(
+            MinnesotaPrior(own_lag_mean=(1.0, 0.9, 0.8)),
+            {},
+            [0.0, 0.9, 0.8],
+            id="per-variable",
+        ),
+        pytest.param(
+            OwnLagPrior(),
+            {"baseline_own_lag_mean": 0.3},
+            [0.9, 0.9, 0.9],
+            id="not-minnesota",
+        ),
+    ],
+)
+def test_own_lag_prior_means(brand_mmm_data, prior, effect_kwargs, expected):
+    """The effect sets the baseline's own-lag mean and keeps the analyst's spec."""
+    spec = VAR(lags=1, prior=prior)
+    effect = make_effect(brand_mmm_data["brand_data"], var=spec, **effect_kwargs)
+    mmm = make_mmm(effect)
+    mmm.build_model(brand_mmm_data["X"], brand_mmm_data["y"])
+
+    B = pm.sample_prior_predictive(
+        draws=2000,
+        var_names=[f"{PREFIX}::B"],
+        model=mmm.model,
+        random_seed=seed,
+    ).prior[f"{PREFIX}::B"]
+    own_lag_means = [
+        float(B.sel(var=name, coeff=f"L1.{name}").mean()) for name in ENDOG_NAMES
+    ]
+
+    np.testing.assert_allclose(own_lag_means, expected, atol=0.02)
+    assert effect.var is spec
+
+
+@pytest.fixture(scope="module")
+def prior_draws(brand_mmm_data) -> xr.DataTree:
+    """Prior draws from an MMM whose effect has two lags."""
+    effect = make_effect(brand_mmm_data["brand_data"], var=VAR(lags=2))
+    mmm = make_mmm(effect)
+    mmm.build_model(brand_mmm_data["X"], brand_mmm_data["y"])
+    return pm.sample_prior_predictive(
+        draws=4000,
+        var_names=[f"{PREFIX}::B_exog", f"{PREFIX}_effect_contribution"],
+        model=mmm.model,
+        random_seed=seed,
+    ).prior
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+def test_exog_prior_scales_with_each_series(brand_mmm_data, prior_draws):
+    """Each equation's exog prior sd is proportional to its series' scale.
+
+    The baseline's scale is the AR(1) residual sd of the target, and each brand
+    metric's is its own, so the ratios pin the scales the VAR is built with.
+    """
+    brand_data = brand_mmm_data["brand_data"]
+    scales = ar1_residual_sd(
+        np.column_stack([brand_mmm_data["y"], brand_data[ENDOG_NAMES[1:]]])
+    )
+    B_exog = prior_draws[f"{PREFIX}::B_exog"].sel(exog="brand_spend")
+    sd = B_exog.std(("chain", "draw"))
+
+    np.testing.assert_allclose(
+        sd.sel(var="baseline") / sd.sel(var=ENDOG_NAMES[1:]),
+        scales[0] / scales[1:],
+        rtol=0.1,
+    )
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+def test_baseline_starts_as_a_standard_normal_in_scaled_units(prior_draws):
+    """The baseline's first ``n_lags`` values have the target scale as prior sd."""
+    start = prior_draws[f"{PREFIX}_effect_contribution"].isel(date=slice(0, 2))
+
+    np.testing.assert_allclose(start.std(("chain", "draw")), 1.0, atol=0.1)
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+def test_brand_data_needs_one_row_per_mmm_date(brand_mmm_data):
+    effect = make_effect(brand_mmm_data["brand_data"].iloc[:-1])
+    mmm = make_mmm(effect)
+
+    with pytest.raises(ValueError, match=r"29 rows of brand_data for 30 MMM dates"):
+        mmm.build_model(brand_mmm_data["X"], brand_mmm_data["y"])
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+def test_building_without_a_target_raises(brand_mmm_data):
+    """Without ``y`` the MMM builds on an all-zero target, which cannot scale it."""
+    mmm = make_mmm(make_effect(brand_mmm_data["brand_data"]))
+
+    with pytest.raises(ValueError, match=rf"{PREFIX}.*target"):
+        mmm.sample_prior_predictive(brand_mmm_data["X"])
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect is not implemented yet")
+@pytest.mark.slow
+@pytest.mark.parametrize("nuts_sampler", ["pymc", "nutpie"])
+def test_nuts_moves_the_baseline(brand_mmm_data, nuts_sampler):
+    mmm = make_mmm(make_effect(brand_mmm_data["brand_data"]))
+    mmm.fit(
+        brand_mmm_data["X"],
+        brand_mmm_data["y"],
+        draws=100,
+        tune=300,
+        chains=2,
+        cores=2,
+        nuts_sampler=nuts_sampler,
+        random_seed=seed,
+        progressbar=False,
+    )
+
+    assert "diverging" in mmm.idata.sample_stats
+    latent = mmm.idata.posterior[f"{PREFIX}::latent"]
+    assert (latent.std("draw") > 0).all()
