@@ -4379,10 +4379,6 @@ def test_mmm_equality():
     assert mmm18 != mmm20
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="MMM.__eq__ does not compare mu effects with their own __eq__ yet",
-)
 def test_mmm_equality_compares_mu_effects_with_their_own_eq():
     """A mu effect that defines ``__eq__`` is compared with it, not ``model_dump()``."""
 
