@@ -627,7 +627,6 @@ def as_panel(data: dict, geos: tuple[str, ...] = ("north", "south")) -> dict:
     }
 
 
-@pytest.mark.xfail(strict=True, reason="VARBaselineEffect does not check the MMM yet")
 @pytest.mark.parametrize(
     "mmm_kwargs, arrange, match",
     [

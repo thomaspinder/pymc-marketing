@@ -35,6 +35,7 @@ from pydantic import Field, InstanceOf, field_validator
 from pytensor.xtensor.type import XTensorVariable
 
 from pymc_marketing.mmm.additive_effect import MuEffect, safe_to_datetime
+from pymc_marketing.mmm.link import LinkFunction
 
 if TYPE_CHECKING:
     from impulso import VAR
@@ -189,6 +190,13 @@ class VARBaselineEffect(MuEffect):
     spend is an exogenous input of the VAR, not a channel. Posterior predictive
     sampling and ``predict`` on other dates are not supported, and they fail inside
     PyTensor with an error that does not name the effect.
+
+    The MMM must have no ``dims``, ``time_varying_intercept=False`` and
+    ``link="identity"``, and building any other MMM raises. The VAR has no
+    cross-sectional dimension, so it models a single panel. A time-varying intercept
+    would compete with the baseline, which is a deviation around a constant
+    intercept. The baseline enters the MMM's mean additively in the target's units,
+    which holds only on the identity link.
 
     The brand metrics' likelihood and the constraint that keeps the baseline
     stationary are potentials, which prior and posterior predictive sampling ignore.
@@ -368,7 +376,7 @@ class VARBaselineEffect(MuEffect):
         return self.model_dump(mode="json", exclude={"brand_data"})
 
     def create_data(self, mmm: "MMM") -> None:  # type: ignore[override]
-        """Check ``brand_data`` on the MMM's dates.
+        """Check the MMM, and ``brand_data`` on the MMM's dates.
 
         The brand data enter the graph as constants in :meth:`create_effect`, so no
         data variable is registered.
@@ -381,10 +389,32 @@ class VARBaselineEffect(MuEffect):
         Raises
         ------
         ValueError
-            If ``brand_data`` cannot be matched to the MMM's dates, or if a column
-            named in ``endog_names`` or ``exog_names`` has a NaN or infinite value on
-            them or is constant on them.
+            If the MMM has ``dims``, a time-varying intercept or a link other than
+            the identity, if ``brand_data`` cannot be matched to the MMM's dates, or
+            if a column named in ``endog_names`` or ``exog_names`` has a NaN or
+            infinite value on them or is constant on them.
         """
+        if mmm.dims:
+            raise ValueError(
+                f"VARBaselineEffect {self.prefix!r} needs an MMM without dims, got "
+                f"dims={mmm.dims}: the VAR has no cross-sectional dimension, so it "
+                "models a single panel."
+            )
+        if mmm.time_varying_intercept:
+            raise ValueError(
+                f"VARBaselineEffect {self.prefix!r} needs an MMM with "
+                "time_varying_intercept=False: the baseline is a zero-mean deviation "
+                "around a constant intercept, and a time-varying intercept would "
+                "compete with it for the same movement in the target."
+            )
+        if mmm.link != LinkFunction.IDENTITY:
+            raise ValueError(
+                f"VARBaselineEffect {self.prefix!r} needs an MMM with link='identity', "
+                f"got link={mmm.link.value!r}: the baseline enters the MMM's mean "
+                "additively in the target's units, which holds only on the identity "
+                "link."
+            )
+
         named_data = self._brand_data_on_mmm_dates(mmm)[self._column_names]
         finite = np.isfinite(named_data.to_numpy(dtype=float)).all(axis=0)
         if non_finite := named_data.columns[~finite].tolist():
@@ -419,9 +449,24 @@ class VARBaselineEffect(MuEffect):
         Raises
         ------
         ValueError
-            If the target's AR(1) residual standard deviation is not positive, as for
-            the all-zero target the MMM builds on when no ``y`` is given.
+            If another ``VARBaselineEffect`` in the MMM names other series, or if the
+            target's AR(1) residual standard deviation is not positive, as for the
+            all-zero target the MMM builds on when no ``y`` is given.
         """
+        for coord, field, names in [
+            ("var", "endog_names", self.endog_names),
+            ("exog", "exog_names", self.exog_names),
+        ]:
+            registered = mmm.model.coords.get(coord)
+            # Without exog_names, Impulso registers no exog coordinate.
+            if names and registered is not None and list(registered) != names:
+                raise ValueError(
+                    f"VARBaselineEffect {self.prefix!r} has {field} {names}, but "
+                    f"another VARBaselineEffect in the MMM has {list(registered)}: "
+                    "Impulso's coordinates are not prefixed, so every "
+                    "VARBaselineEffect in one MMM must name the same series."
+                )
+
         impulso = _import_impulso()
         brand_data = self._brand_data_on_mmm_dates(mmm)
         observed = brand_data[self._observed_names].to_numpy(dtype=float)
