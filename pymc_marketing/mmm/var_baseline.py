@@ -34,10 +34,12 @@ from packaging.version import Version
 from pydantic import Field, InstanceOf, field_validator
 from pytensor.xtensor.type import XTensorVariable
 
-from pymc_marketing.mmm.additive_effect import Model, MuEffect
+from pymc_marketing.mmm.additive_effect import MuEffect, safe_to_datetime
 
 if TYPE_CHECKING:
     from impulso import VAR
+
+    from pymc_marketing.mmm.mmm import MMM
 
 # The lower bound of the impulso pins in pyproject.toml; a test keeps them in step.
 _MIN_IMPULSO = "0.1.3"
@@ -89,6 +91,27 @@ def _import_impulso() -> ModuleType:
     return impulso
 
 
+def _format_dates(dates: pd.DatetimeIndex, limit: int = 5) -> str:
+    """Return the first ``limit`` dates, and how many more there are, for a message.
+
+    Parameters
+    ----------
+    dates : pd.DatetimeIndex
+        The dates to list.
+    limit : int, default 5
+        The most dates to list.
+
+    Returns
+    -------
+    str
+        The dates as ``YYYY-MM-DD``, separated by commas.
+    """
+    listed = ", ".join(dates[:limit].strftime("%Y-%m-%d"))
+    if len(dates) > limit:
+        listed += f" and {len(dates) - limit} more"
+    return listed
+
+
 class VARBaselineEffect(MuEffect):
     """Latent sales baseline that moves with brand metrics through a Bayesian VAR.
 
@@ -131,10 +154,11 @@ class VARBaselineEffect(MuEffect):
     Parameters
     ----------
     brand_data : pd.DataFrame
-        The brand metrics and exogenous inputs, one row per MMM date and in date
-        order. Rows are matched to the MMM's dates by position. The columns named in
-        ``endog_names`` and ``exog_names`` must be numeric and finite, and vary. The
-        effect keeps a copy of the frame.
+        The brand metrics and exogenous inputs, with the MMM's date column. Rows are
+        matched to the MMM's dates on that column, so they can be in any order and
+        cover a longer period, but every MMM date needs exactly one row. The columns
+        named in ``endog_names`` and ``exog_names`` must be numeric and finite, and
+        vary over the MMM's dates. The effect keeps a copy of the frame.
     baseline_name : str
         Name of the latent baseline in the VAR. It must not be a column of
         ``brand_data``.
@@ -353,31 +377,32 @@ class VARBaselineEffect(MuEffect):
         """Serialize to a dict, without ``brand_data``."""
         return self.model_dump(mode="json", exclude={"brand_data"})
 
-    def create_data(self, mmm: Model) -> None:
-        """Check that ``brand_data`` has one row per MMM date.
+    def create_data(self, mmm: "MMM") -> None:  # type: ignore[override]
+        """Check ``brand_data`` on the MMM's dates.
 
         The brand data enter the graph as constants in :meth:`create_effect`, so no
         data variable is registered.
 
         Parameters
         ----------
-        mmm : Model
+        mmm : MMM
             The MMM model instance.
 
         Raises
         ------
         ValueError
-            If ``brand_data`` and the MMM have different numbers of dates.
+            If ``brand_data`` cannot be matched to the MMM's dates, or if a column
+            named in ``endog_names`` or ``exog_names`` is constant on them.
         """
-        n_dates = len(mmm.model.coords["date"])
-        if len(self.brand_data) != n_dates:
+        named_data = self._brand_data_on_mmm_dates(mmm)[self._column_names]
+        if constant_columns := named_data.columns[named_data.nunique() == 1].tolist():
             raise ValueError(
-                f"VARBaselineEffect {self.prefix!r} matches brand_data to the MMM's "
-                f"dates by position, so it needs one row per date: got "
-                f"{len(self.brand_data)} rows of brand_data for {n_dates} MMM dates."
+                f"VARBaselineEffect {self.prefix!r} needs brand data that vary over "
+                f"the MMM's dates: columns {constant_columns} of brand_data are "
+                "constant on them."
             )
 
-    def create_effect(self, mmm: Model) -> XTensorVariable:
+    def create_effect(self, mmm: "MMM") -> XTensorVariable:  # type: ignore[override]
         """Build the VAR and return the baseline's contribution.
 
         The VAR is registered in a model named ``prefix`` nested in the MMM's model,
@@ -385,7 +410,7 @@ class VARBaselineEffect(MuEffect):
 
         Parameters
         ----------
-        mmm : Model
+        mmm : MMM
             The MMM model instance.
 
         Returns
@@ -400,10 +425,11 @@ class VARBaselineEffect(MuEffect):
             the all-zero target the MMM builds on when no ``y`` is given.
         """
         impulso = _import_impulso()
-        observed = self.brand_data[self._observed_names].to_numpy(dtype=float)
+        brand_data = self._brand_data_on_mmm_dates(mmm)
+        observed = brand_data[self._observed_names].to_numpy(dtype=float)
         exog = None
         if self.exog_names:
-            exog = self.brand_data[self.exog_names].to_numpy(dtype=float)
+            exog = brand_data[self.exog_names].to_numpy(dtype=float)
             exog = exog - exog.mean(axis=0)
 
         target = mmm.xarray_dataset["_target"].to_numpy()
@@ -438,7 +464,9 @@ class VARBaselineEffect(MuEffect):
             f"{self.prefix}_effect_contribution", baseline / target_scale
         )
 
-    def set_data(self, mmm: Model, model: pm.Model, X: xr.Dataset) -> None:
+    def set_data(  # type: ignore[override]
+        self, mmm: "MMM", model: pm.Model, X: xr.Dataset
+    ) -> None:
         """Do nothing: the brand data enter the graph as constants.
 
         The baseline exists only on the dates the MMM was fitted on, yet this does
@@ -448,7 +476,7 @@ class VARBaselineEffect(MuEffect):
 
         Parameters
         ----------
-        mmm : Model
+        mmm : MMM
             The MMM model instance.
         model : pm.Model
             The PyMC model the new data are set on.
@@ -466,12 +494,56 @@ class VARBaselineEffect(MuEffect):
         """The columns of ``brand_data`` the VAR uses, observed series first."""
         return [*self._observed_names, *self.exog_names]
 
-    def _baseline_start_sd(self, mmm: Model, baseline_scale: float) -> float:
+    def _brand_data_on_mmm_dates(self, mmm: "MMM") -> pd.DataFrame:
+        """Return the rows of ``brand_data`` on the MMM's dates, in the MMM's order.
+
+        Parameters
+        ----------
+        mmm : MMM
+            The MMM model instance.
+
+        Returns
+        -------
+        pd.DataFrame
+            One row of ``brand_data`` per MMM date.
+
+        Raises
+        ------
+        ValueError
+            If ``brand_data`` has no column named like the MMM's date column, has a
+            date more than once, or misses an MMM date.
+        """
+        date_column = mmm.date_column
+        if date_column not in self.brand_data.columns:
+            raise ValueError(
+                f"VARBaselineEffect {self.prefix!r} matches brand_data to the MMM on "
+                f"its date column {date_column!r}, which is missing in brand_data."
+            )
+
+        brand_dates = safe_to_datetime(self.brand_data[date_column], date_column)
+        if brand_dates.has_duplicates:
+            repeated = brand_dates[brand_dates.duplicated()].unique()
+            raise ValueError(
+                f"VARBaselineEffect {self.prefix!r} needs one row of brand_data per "
+                f"date, but dates {_format_dates(repeated)} appear more than once."
+            )
+
+        mmm_dates = safe_to_datetime(mmm.model.coords["date"], "date")
+        rows = brand_dates.get_indexer(mmm_dates)
+        if (rows == -1).any():
+            missing = mmm_dates[rows == -1]
+            raise ValueError(
+                f"VARBaselineEffect {self.prefix!r} has no brand_data for MMM dates "
+                f"{_format_dates(missing)}."
+            )
+        return self.brand_data.iloc[rows]
+
+    def _baseline_start_sd(self, mmm: "MMM", baseline_scale: float) -> float:
         """Return the standard deviation of the baseline's first ``lags`` values.
 
         Parameters
         ----------
-        mmm : Model
+        mmm : MMM
             The MMM model instance.
         baseline_scale : float
             The residual standard deviation of an AR(1) fit to the target, in the
