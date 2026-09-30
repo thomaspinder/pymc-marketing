@@ -159,10 +159,6 @@ def test_baseline_own_lag_mean_must_keep_the_baseline_stationary(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not check brand_data at construction yet",
-)
 @pytest.mark.parametrize(
     "brand_columns, effect_kwargs, match",
     [
