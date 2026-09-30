@@ -464,10 +464,6 @@ def logp_on_mmm_dates(shorter_mmm_data) -> float:
     return initial_logp(make_mmm(make_effect(on_mmm_dates)), X, y)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not align brand_data to the MMM's dates yet",
-)
 @pytest.mark.parametrize(
     "date_column, arrange",
     [
@@ -528,10 +524,6 @@ def test_brand_data_off_the_mmm_dates_is_not_checked(
     np.testing.assert_allclose(initial_logp(make_mmm(effect), X, y), logp_on_mmm_dates)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not align brand_data to the MMM's dates yet",
-)
 @pytest.mark.parametrize(
     "date_column, arrange, match",
     [
