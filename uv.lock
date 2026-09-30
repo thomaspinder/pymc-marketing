@@ -1819,7 +1819,7 @@ wheels = [
 
 [[package]]
 name = "impulso"
-version = "0.0.12"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "arviz" },
@@ -1833,9 +1833,9 @@ dependencies = [
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "xarray" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2c/96/acb51d67e2b502b960b89b7958644203272b601095e6aafc0cae9e5e1125/impulso-0.0.12.tar.gz", hash = "sha256:7d5f4e0715c1af1b5bf8ad35f1c65657c0cdd87ec81c15ebf28f41f56d163081", size = 762219, upload-time = "2026-08-04T21:48:11.617Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/92/94/24b7fc9b1f09b31f6e210e0329e3fe4d19484defa638facfad6cca67c1b9/impulso-0.1.2.tar.gz", hash = "sha256:603386e64427a4fa4a2a81acd5cc379300b3c5146033d24403880d585f35f612", size = 1192910, upload-time = "2026-09-29T07:37:11.182Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/1c/f43425324dbd5fd6dfe6886691cac27eb96c679b769d71d4234e70cf6d56/impulso-0.0.12-py3-none-any.whl", hash = "sha256:03d34c696f5189c715ea1b36891ecba2db2d257fcbbd4e842b2588275ec22b42", size = 164909, upload-time = "2026-08-04T21:48:10.221Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/f4/a20a73ff9f86349d1b94df8a4018d17c3140c1cb6da8304092e61fb6446f/impulso-0.1.2-py3-none-any.whl", hash = "sha256:feeb1f37c3a1502f128f5fdff4e8d46ed2defdf1df002defcf693d96cf63b835", size = 206750, upload-time = "2026-09-29T07:37:09.55Z" },
 ]
 
 [[package]]
@@ -4066,6 +4066,7 @@ test = [
     { name = "graphviz" },
     { name = "h5netcdf" },
     { name = "h5py" },
+    { name = "impulso" },
     { name = "ipykernel" },
     { name = "ipywidgets" },
     { name = "jax" },
@@ -4086,6 +4087,9 @@ test = [
     { name = "pytest-mock" },
     { name = "pytest-split" },
     { name = "watermark" },
+]
+var = [
+    { name = "impulso" },
 ]
 
 [package.dev-dependencies]
@@ -4114,7 +4118,9 @@ requires-dist = [
     { name = "graphviz", marker = "extra == 'test'", specifier = ">=0.20.1" },
     { name = "h5netcdf", marker = "extra == 'test'", specifier = ">=1.8.1" },
     { name = "h5py", marker = "extra == 'test'", specifier = ">=3.16.0" },
-    { name = "impulso", marker = "extra == 'docs'", specifier = ">=0.0.12" },
+    { name = "impulso", marker = "extra == 'docs'", specifier = ">=0.1.0" },
+    { name = "impulso", marker = "extra == 'test'", specifier = ">=0.1.0" },
+    { name = "impulso", marker = "extra == 'var'", specifier = ">=0.1.0" },
     { name = "ipykernel", marker = "extra == 'test'" },
     { name = "ipython", marker = "extra == 'docs'", specifier = "!=8.7.0" },
     { name = "ipywidgets", marker = "extra == 'docs'" },
@@ -4184,7 +4190,7 @@ requires-dist = [
     { name = "xarray", specifier = ">=2024.1.0" },
     { name = "xarray-einstats", specifier = ">=0.5.1" },
 ]
-provides-extras = ["dag", "docs", "lint", "pie", "test"]
+provides-extras = ["dag", "docs", "lint", "pie", "test", "var"]
 
 [package.metadata.requires-dev]
 dev = [
