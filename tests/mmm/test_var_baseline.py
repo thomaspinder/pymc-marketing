@@ -21,9 +21,6 @@ from types import ModuleType
 import pytest
 
 
-@pytest.mark.xfail(
-    strict=True, reason="pymc_marketing.mmm.var_baseline is not implemented yet"
-)
 def test_import_impulso_missing_raises(monkeypatch):
     """Without Impulso, the error names the extra and the install command."""
     from pymc_marketing.mmm.var_baseline import _import_impulso
@@ -53,9 +50,6 @@ def test_import_impulso_too_old_raises(monkeypatch):
     assert "pip install -U 'pymc-marketing[var]'" in message
 
 
-@pytest.mark.xfail(
-    strict=True, reason="pymc_marketing.mmm.var_baseline is not implemented yet"
-)
 def test_import_impulso_without_metadata_is_unchecked(monkeypatch):
     """An Impulso with no installed distribution, such as a source tree, is used."""
     from pymc_marketing.mmm.var_baseline import _import_impulso
@@ -70,9 +64,6 @@ def test_import_impulso_without_metadata_is_unchecked(monkeypatch):
     assert _import_impulso() is impulso
 
 
-@pytest.mark.xfail(
-    strict=True, reason="pymc_marketing.mmm.var_baseline is not implemented yet"
-)
 def test_pymc_marketing_imports_without_impulso():
     """Neither the package nor the effect's module needs Impulso at import time.
 
