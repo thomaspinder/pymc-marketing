@@ -55,6 +55,7 @@ dependencies = [
 [project.optional-dependencies]
 dag = ["dowhy", "networkx", "osqp<1.0.0,>=0.6.2", "pygraphviz"]
 pie = ["pymc-bart>=0.13.0"]
+var = ["impulso>=0.1.0"]
 docs = [
     "blackjax<1.6",
     "fastprogress",
@@ -84,7 +85,7 @@ docs = [
     "osqp<1.0.0,>=0.6.2",
     "preliz>=0.20.0",
     "plotly>=6.3.0",
-    "impulso>=0.0.12"
+    "impulso>=0.1.0",
 ]
 lint = ["mypy", "pandas-stubs", "pre-commit>=2.19.0", "ruff>=0.1.4"]
 test = [
@@ -113,6 +114,7 @@ test = [
     "preliz>=0.20.0",
     "plotly>=6.3.0",
     "pymc-bart>=0.13.0",
+    "impulso>=0.1.0",
     "watermark",
     "ipywidgets>=8.1.8",
 ]
