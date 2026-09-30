@@ -233,9 +233,6 @@ def test_prior_other_than_minnesota_raises_at_construction(brand_mmm_data, prior
         make_effect(brand_mmm_data["brand_data"], var=spec)
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Saving and loading VARBaselineEffect is not implemented yet"
-)
 @pytest.mark.parametrize(
     "error_dist, match",
     [
@@ -1447,9 +1444,6 @@ def save_and_load_effect(
         return serialization.deserialize(data, DeserializationContext(idata=idata))
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Saving and loading VARBaselineEffect is not implemented yet"
-)
 @pytest.mark.parametrize(
     "arrange",
     [
@@ -1481,9 +1475,6 @@ def test_brand_data_is_saved_and_loaded(brand_mmm_data, tmp_path, arrange):
     assert loaded == effect
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Saving and loading VARBaselineEffect is not implemented yet"
-)
 def test_missing_text_loads_as_an_empty_string(brand_mmm_data, tmp_path):
     """netCDF has no missing text value."""
     brand_data = brand_mmm_data["brand_data"].assign(source="survey")
@@ -1557,9 +1548,6 @@ def loaded_mmm(saved_mmm) -> MMM:
     return MMM.load(str(saved_mmm[1]))
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Saving and loading VARBaselineEffect is not implemented yet"
-)
 def test_loaded_effect_equals_the_saved_one(saved_mmm, loaded_mmm):
     """``==`` compares every field, the VAR spec included, and brand_data's rows."""
     effect = saved_mmm[0].mu_effects[0]
@@ -1569,9 +1557,6 @@ def test_loaded_effect_equals_the_saved_one(saved_mmm, loaded_mmm):
     assert loaded == effect
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Saving and loading VARBaselineEffect is not implemented yet"
-)
 def test_fitted_var_is_unchanged_by_loading(saved_mmm, loaded_mmm):
     """It recomputes the centering means from brand_data and U from the target."""
     mmm = saved_mmm[0]
@@ -1590,17 +1575,10 @@ def test_fitted_var_is_unchanged_by_loading(saved_mmm, loaded_mmm):
     assert loaded.error_dist == fitted.error_dist
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Saving and loading VARBaselineEffect is not implemented yet",
-)
 def test_loaded_mmm_equals_the_saved_one(saved_mmm, loaded_mmm):
     assert loaded_mmm == saved_mmm[0]
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Saving and loading VARBaselineEffect is not implemented yet"
-)
 def test_posterior_predictive_is_unchanged_by_loading(
     brand_mmm_data, saved_mmm, loaded_mmm
 ):
@@ -1615,9 +1593,6 @@ def test_posterior_predictive_is_unchanged_by_loading(
     xr.testing.assert_equal(loaded, saved)
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Saving and loading VARBaselineEffect is not implemented yet"
-)
 def test_loading_without_impulso_raises(saved_mmm, monkeypatch):
     monkeypatch.setitem(sys.modules, "impulso", None)
 
@@ -1662,46 +1637,17 @@ def test_mmm_with_events_of_the_same_prefix_saves_and_loads(brand_mmm_data, tmp_
 @pytest.mark.parametrize(
     "arrange, effect_kwargs, equal",
     [
+        pytest.param(lambda df: df.copy(), {}, True, id="copy"),
         pytest.param(
-            lambda df: df.copy(),
-            {},
-            True,
-            id="copy",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect does not compare brand_data with pandas yet",
-            ),
-        ),
-        pytest.param(
-            lambda df: df.set_axis(df.index + 100),
-            {},
-            True,
-            id="other-index",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect does not compare brand_data with pandas yet",
-            ),
+            lambda df: df.set_axis(df.index + 100), {}, True, id="other-index"
         ),
         pytest.param(
             lambda df: df.assign(awareness=df["awareness"] + 1.0),
             {},
             False,
             id="other-values",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect does not compare brand_data with pandas yet",
-            ),
         ),
-        pytest.param(
-            lambda df: df,
-            {"var": VAR(lags=2)},
-            False,
-            id="other-var",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect does not compare brand_data with pandas yet",
-            ),
-        ),
+        pytest.param(lambda df: df, {"var": VAR(lags=2)}, False, id="other-var"),
     ],
 )
 def test_effects_compare_brand_data_with_pandas(
