@@ -172,7 +172,8 @@ class VARBaselineEffect(MuEffect):
     often cover other periods than the MMM, or come at another cadence, so they stay
     out of ``X``, and the effect matches their rows to the MMM's dates. A forecast of
     the baseline would need new brand data anyway. The brand data are therefore
-    constants in the graph, not data in the MMM's ``constant_data``.
+    constants in the graph, not data in the MMM's ``constant_data``. Saving the MMM
+    stores them in an idata group of their own.
 
     The VAR runs on the baseline in the target's original units and on the brand
     columns in their own units, centered on their means over the MMM's dates. The
@@ -233,10 +234,12 @@ class VARBaselineEffect(MuEffect):
         contribution is ``{prefix}_effect_contribution``.
     var : impulso.VAR
         The VAR specification, with an integer ``lags``, constant volatility and
-        Gaussian errors. It is not modified. Its prior must be a ``MinnesotaPrior``
-        or the ``"minnesota"`` shorthand, and its volatility and error distribution
-        must be Impulso's own: the fitted MMM stores the spec, and no other prior,
-        volatility or error distribution loads back as it was saved.
+        Gaussian errors. It is not modified. Its volatility and error distribution
+        must be Impulso's own, since the fitted MMM stores the spec and no other
+        volatility or error distribution loads back as it was saved. For now, its
+        prior must be a ``MinnesotaPrior`` or the ``"minnesota"`` shorthand, since
+        Impulso does not yet load other priors back as they were saved, see
+        https://github.com/QuantClimate/Impulso/issues/379.
     baseline_own_lag_mean : float, default 0.0
         Prior mean of the baseline's own first-lag coefficient, strictly between -1
         and 1 because the baseline is a stationary deviation. The effect sets the
@@ -261,11 +264,12 @@ class VARBaselineEffect(MuEffect):
     -----
     The baseline exists only on the dates the MMM is fitted on. On those dates,
     fitting, the contribution decomposition, the MMM's summaries, :meth:`fitted_var`
-    and posterior predictive sampling work. Channel incrementality is not supported
-    yet. The budget optimizer runs on any window but ignores the baseline, as it
-    should: brand spend is an exogenous input of the VAR, not a channel. Posterior
-    predictive sampling and ``predict`` on other dates are not supported, and they
-    fail inside PyTensor with an error that does not name the effect.
+    and posterior predictive sampling work. Saving and loading the MMM work, and so
+    does posterior predictive sampling after loading. Channel incrementality is not
+    supported yet. The budget optimizer runs on any window but ignores the baseline,
+    as it should: brand spend is an exogenous input of the VAR, not a channel.
+    Posterior predictive sampling and ``predict`` on other dates are not supported,
+    and they fail inside PyTensor with an error that does not name the effect.
 
     The MMM must have no ``dims``, ``time_varying_intercept=False`` and
     ``link="identity"``, and building any other MMM raises. The VAR has no
@@ -308,10 +312,11 @@ class VARBaselineEffect(MuEffect):
 
     Impulso adds a positional ``time`` coordinate that no variable uses.
 
-    Saving the MMM saves ``brand_data`` with its column dtypes but not its index.
-    netCDF has no missing text value, so missing values in a text column load as
-    empty strings. Columns that netCDF cannot store, such as time-zone-aware dates
-    and categoricals, make saving fail, so convert or drop them first.
+    Saving the MMM stores ``brand_data``, with its column dtypes but not its index,
+    in the idata group ``supplementary_data_{prefix}_brand_data``. netCDF has no
+    missing text value, so missing values in a text column load as empty strings.
+    Columns that netCDF cannot store, such as time-zone-aware dates and
+    categoricals, make saving fail, so convert or drop them first.
 
     References
     ----------
@@ -423,8 +428,10 @@ class VARBaselineEffect(MuEffect):
         if not isinstance(prior, impulso.MinnesotaPrior):
             raise TypeError(
                 "var's prior must be a MinnesotaPrior or 'minnesota', got "
-                f"{type(prior).__name__}: only a MinnesotaPrior is supported, since no "
-                "other prior loads back as it was saved and the fitted MMM stores var."
+                f"{type(prior).__name__}: only a MinnesotaPrior is supported for now, "
+                "since the fitted MMM stores var and Impulso does not yet load other "
+                "priors back as they were saved, see "
+                "https://github.com/QuantClimate/Impulso/issues/379."
             )
         # Fitting serializes the effect after sampling and loading validates it back,
         # so check both before the fit.
@@ -529,20 +536,32 @@ class VARBaselineEffect(MuEffect):
         ``brand_data`` is stored in the idata group named by ``brand_data_group``, see
         :meth:`idata_groups`. Its column dtypes are stored here, since not all of them
         survive netCDF: dates load in nanoseconds and object columns as strings.
+        ``format_version`` numbers the dict's layout, so that loading can tell a
+        layout it does not read.
         """
         return {
             **self.model_dump(mode="json", exclude={"brand_data"}),
-            "brand_data_group": f"supplementary_data_{self.prefix}",
+            "format_version": _FORMAT_VERSION,
+            "brand_data_group": self._brand_data_group,
             "brand_data_dtypes": self.brand_data.dtypes.astype(str).to_dict(),
         }
 
     def idata_groups(self) -> dict[str, xr.Dataset]:
         """Return ``brand_data``, without its index, as a supplementary idata group."""
         return {
-            f"supplementary_data_{self.prefix}": xr.Dataset.from_dataframe(
+            self._brand_data_group: xr.Dataset.from_dataframe(
                 self.brand_data.reset_index(drop=True)
             ),
         }
+
+    @property
+    def _brand_data_group(self) -> str:
+        """The idata group of ``brand_data``.
+
+        It is named after the data as well as the prefix, so it differs from the
+        ``supplementary_data_{prefix}`` group of an ``EventAdditiveEffect``.
+        """
+        return f"supplementary_data_{self.prefix}_brand_data"
 
     def create_data(self, mmm: "MMM") -> None:  # type: ignore[override]
         """Check the MMM, and ``brand_data`` on the MMM's dates.
@@ -1175,6 +1194,11 @@ class VARBaselineEffect(MuEffect):
         return self.var.model_copy(update=update)
 
 
+# The layout of the dict `VARBaselineEffect.to_dict` writes. Raise it when the layout
+# changes, and have the deserializer migrate the older layouts it still reads.
+_FORMAT_VERSION = 1
+
+
 def _deserialize_var_baseline_effect(
     data: dict[str, Any], context: DeserializationContext | None
 ) -> VARBaselineEffect:
@@ -1197,8 +1221,17 @@ def _deserialize_var_baseline_effect(
     ImportError
         If Impulso is not installed.
     SerializationError
-        If there is no idata, or it has no ``brand_data``.
+        If the dict has a format version other than the one this module reads, if
+        there is no idata, or if it has no ``brand_data``.
     """
+    version = data.get("format_version")
+    if version != _FORMAT_VERSION:
+        raise SerializationError(
+            f"Cannot deserialize VARBaselineEffect saved in format version {version}: "
+            f"this version of PyMC-Marketing reads only format version "
+            f"{_FORMAT_VERSION}, so load it with the version that saved it."
+        )
+
     impulso = _import_impulso()
     group_name = data["brand_data_group"]
 

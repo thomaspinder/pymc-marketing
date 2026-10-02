@@ -211,11 +211,6 @@ def test_var_must_be_an_impulso_var_spec(brand_mmm_data):
         make_effect(brand_mmm_data["brand_data"], var=MinnesotaPrior())
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not say that the Minnesota-only prior is "
-    "temporary yet",
-)
 @pytest.mark.parametrize(
     "prior",
     [PlainPrior(), PydanticPrior(), SVDefaultPrior()],
@@ -1430,18 +1425,12 @@ def test_missing_text_loads_as_an_empty_string(brand_mmm_data, tmp_path):
     pd.testing.assert_frame_equal(loaded.brand_data, brand_data.fillna({"source": ""}))
 
 
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect does not record a format version yet"
-)
 def test_saved_effect_records_its_format_version(brand_mmm_data):
     effect = make_effect(brand_mmm_data["brand_data"])
 
     assert serialization.serialize(effect)["format_version"] == 1
 
 
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect does not record a format version yet"
-)
 def test_loading_a_newer_format_version_raises(brand_mmm_data, tmp_path):
     """A layout this version does not read is refused rather than misread."""
     from pymc_marketing.serialization import SerializationError
@@ -1544,11 +1533,6 @@ def test_loading_without_impulso_raises(saved_mmm, monkeypatch):
         MMM.load(str(saved_mmm[1]))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect saves its brand data in the idata group that an "
-    "EventAdditiveEffect with the same prefix uses",
-)
 def test_mmm_with_events_of_the_same_prefix_saves_and_loads(brand_mmm_data, tmp_path):
     """The brand data and the events are saved in different idata groups."""
     from pymc_extras.prior import Prior
