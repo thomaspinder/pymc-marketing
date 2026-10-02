@@ -1849,7 +1849,7 @@ class _UnprefixedFittedDatesOnlyEffect(MuEffect):
 class _DuckTypedZeroEffect:
     """``_ZeroEffect`` without ``MuEffect``, as the additive-effect module allows.
 
-    It does not declare ``supports_new_dates``.
+    It declares neither ``supports_new_dates`` nor ``frozen_deterministics``.
     """
 
     prefix = "duck"
@@ -1874,6 +1874,14 @@ serialization.register(
     _DuckTypedZeroEffect,
     deserializer=lambda data: _DuckTypedZeroEffect(),
 )
+
+
+class _FrozenZeroEffect(_ZeroEffect):
+    """``_ZeroEffect`` whose contribution is taken from the posterior."""
+
+    def frozen_deterministics(self) -> list[str]:
+        """The contribution."""
+        return [self.contribution_var_name]
 
 
 @pytest.mark.parametrize(
@@ -1924,6 +1932,31 @@ def test_sample_posterior_predictive_refuses_new_dates_for_effects_without_them(
         r"2023-01-09, so prediction on new dates is not supported\.$",
     ):
         mmm.sample_posterior_predictive(X.iloc[-5:], extend_idata=False)
+
+
+@pytest.mark.xfail(
+    strict=True, reason="MMM.frozen_deterministics does not ask the mu effects yet"
+)
+def test_frozen_deterministics_include_the_mu_effects():
+    """An effect's names join the MMM's own, such as its HSGP intercept's."""
+    mmm = (
+        MMM(
+            date_column="date",
+            target_column="target",
+            channel_columns=["channel_1", "channel_2"],
+            adstock=GeometricAdstock(l_max=2),
+            saturation=LogisticSaturation(),
+            time_varying_intercept=True,
+        )
+        .add_mu_effect(_ZeroEffect())
+        .add_mu_effect(_DuckTypedZeroEffect())
+        .add_mu_effect(_FrozenZeroEffect(prefix="frozen"))
+    )
+
+    assert mmm.frozen_deterministics == [
+        *SoftPlusHSGP.deterministics_to_replace("intercept_latent_process"),
+        "frozen_effect_contribution",
+    ]
 
 
 def test_sample_posterior_predictive_same_data_with_include_last_observations(

@@ -1653,3 +1653,30 @@ def test_do_on_the_channel_data(fitted_mmm):
     model = pm.do(fitted_mmm.model, {"channel_data": np.zeros(channel_data.shape)})
 
     assert f"{PREFIX}_effect_contribution" in model.named_vars
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="VARBaselineEffect does not take its contribution from the posterior yet",
+)
+@pytest.mark.parametrize("mmm_name", ["fitted_mmm", "loaded_mmm"])
+def test_incremental_contribution_is_the_channel_contribution(request, mmm_name):
+    """The baseline does not depend on spend, so it adds nothing to the increment.
+
+    Without spend on any of the MMM's dates, each channel's increment over all of
+    them is its whole contribution, in the target's units.
+    """
+    mmm = request.getfixturevalue(mmm_name)
+    target_scale = mmm.idata.constant_data["target_scale"]
+    channel_contribution = (
+        mmm.idata.posterior["channel_contribution"].sum("date") * target_scale
+    )
+
+    incremental = mmm.incrementality.compute_incremental_contribution(
+        frequency="all_time"
+    )
+
+    assert incremental.dims == ("chain", "draw", "channel")
+    np.testing.assert_allclose(
+        incremental, channel_contribution.transpose(*incremental.dims)
+    )
