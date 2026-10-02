@@ -1819,7 +1819,7 @@ wheels = [
 
 [[package]]
 name = "impulso"
-version = "0.1.2"
+version = "0.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "arviz" },
@@ -1833,9 +1833,9 @@ dependencies = [
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "xarray" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/92/94/24b7fc9b1f09b31f6e210e0329e3fe4d19484defa638facfad6cca67c1b9/impulso-0.1.2.tar.gz", hash = "sha256:603386e64427a4fa4a2a81acd5cc379300b3c5146033d24403880d585f35f612", size = 1192910, upload-time = "2026-09-29T07:37:11.182Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/07/5acf7f725152b2468077cdc948236c049a50a8158587fc6af2f7caeb4559/impulso-0.1.3.tar.gz", hash = "sha256:3865307721bdc4d46a491a0a0276040ff356ba9440cd4ddd25ca21782b2efe49", size = 1194561, upload-time = "2026-09-30T18:50:54.644Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/f4/a20a73ff9f86349d1b94df8a4018d17c3140c1cb6da8304092e61fb6446f/impulso-0.1.2-py3-none-any.whl", hash = "sha256:feeb1f37c3a1502f128f5fdff4e8d46ed2defdf1df002defcf693d96cf63b835", size = 206750, upload-time = "2026-09-29T07:37:09.55Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/45/79e80e6819e5be69ffb35e59b8e1fdbb546d0ced43ff86050ff37ccce880/impulso-0.1.3-py3-none-any.whl", hash = "sha256:cafc7010c4092c83e44c6cd9d5379acb75437c06c6e660363c9aac63443c5a22", size = 207103, upload-time = "2026-09-30T18:50:53.39Z" },
 ]
 
 [[package]]
@@ -3996,6 +3996,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "narwhals" },
     { name = "numpy" },
+    { name = "packaging" },
     { name = "pandas" },
     { name = "patsy" },
     { name = "preliz" },
@@ -4118,9 +4119,9 @@ requires-dist = [
     { name = "graphviz", marker = "extra == 'test'", specifier = ">=0.20.1" },
     { name = "h5netcdf", marker = "extra == 'test'", specifier = ">=1.8.1" },
     { name = "h5py", marker = "extra == 'test'", specifier = ">=3.16.0" },
-    { name = "impulso", marker = "extra == 'docs'", specifier = ">=0.1.0" },
-    { name = "impulso", marker = "extra == 'test'", specifier = ">=0.1.0" },
-    { name = "impulso", marker = "extra == 'var'", specifier = ">=0.1.0" },
+    { name = "impulso", marker = "extra == 'docs'", specifier = ">=0.1.3" },
+    { name = "impulso", marker = "extra == 'test'", specifier = ">=0.1.3" },
+    { name = "impulso", marker = "extra == 'var'", specifier = ">=0.1.3" },
     { name = "ipykernel", marker = "extra == 'test'" },
     { name = "ipython", marker = "extra == 'docs'", specifier = "!=8.7.0" },
     { name = "ipywidgets", marker = "extra == 'docs'" },
@@ -4147,6 +4148,7 @@ requires-dist = [
     { name = "osqp", marker = "extra == 'dag'", specifier = ">=0.6.2,<1.0.0" },
     { name = "osqp", marker = "extra == 'docs'", specifier = ">=0.6.2,<1.0.0" },
     { name = "osqp", marker = "extra == 'test'", specifier = ">=0.6.2,<1.0.0" },
+    { name = "packaging" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pandas-stubs", marker = "extra == 'lint'" },
     { name = "papermill", marker = "extra == 'test'" },

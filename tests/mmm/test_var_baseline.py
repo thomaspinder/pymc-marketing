@@ -31,9 +31,6 @@ def test_import_impulso_missing_raises(monkeypatch):
         _import_impulso()
 
 
-@pytest.mark.xfail(
-    strict=True, reason="_import_impulso does not check Impulso's version yet"
-)
 def test_import_impulso_too_old_raises(monkeypatch):
     """An Impulso older than the minimum is refused with the upgrade command."""
     from pymc_marketing.mmm.var_baseline import _import_impulso
