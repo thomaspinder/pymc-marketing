@@ -251,10 +251,6 @@ def test_own_lag_prior_means(brand_mmm_data, prior, effect_kwargs, expected):
     assert effect.var is spec
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not check own_lag_mean's entry for the baseline yet",
-)
 @pytest.mark.parametrize(
     "own_lag_mean, baseline_own_lag_mean",
     [
