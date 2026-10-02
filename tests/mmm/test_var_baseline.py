@@ -1780,10 +1780,6 @@ def contribution_lost(mmm: MMM, X: pd.DataFrame, period: pd.Series) -> xr.DataAr
     return (lost * mmm.idata.constant_data["target_scale"]).sum("date")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not take its contribution from the posterior yet",
-)
 @pytest.mark.parametrize("mmm_name", ["fitted_mmm", "loaded_mmm"])
 @pytest.mark.parametrize(
     "kwargs, frequency",
