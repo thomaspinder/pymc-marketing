@@ -165,10 +165,6 @@ def test_baseline_own_lag_mean_must_keep_the_baseline_stationary(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect's innovation-scale prior is not implemented yet",
-)
 @pytest.mark.parametrize("baseline_innovation_sd", [0.0, -0.1, np.nan, np.inf])
 def test_baseline_innovation_sd_must_be_positive_and_finite(
     brand_mmm_data, baseline_innovation_sd
@@ -252,10 +248,6 @@ def test_brand_data_is_copied_at_construction(brand_mmm_data):
     pd.testing.assert_frame_equal(effect.brand_data, brand_mmm_data["brand_data"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect's innovation-scale prior is not implemented yet",
-)
 def test_fit_adds_the_var_and_the_baseline_to_the_posterior(fitted_mmm):
     posterior = fitted_mmm.idata.posterior
     var_names = [
@@ -443,10 +435,6 @@ def assert_draws_follow(draws: xr.DataArray, dist) -> None:
     np.testing.assert_allclose(draws.quantile(QUARTILES), dist.ppf(QUARTILES), rtol=0.1)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect's innovation-scale prior is not implemented yet",
-)
 @pytest.mark.parametrize(
     "baseline_innovation_sd", [None, 0.1], ids=["from-target", "override"]
 )
@@ -471,27 +459,7 @@ def test_baseline_innovation_sd_prior_is_half_normal_below_u(
 
 
 @pytest.mark.parametrize(
-    "baseline_innovation_sd",
-    [
-        pytest.param(
-            None,
-            id="from-target",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect's innovation-scale prior is not implemented "
-                "yet",
-            ),
-        ),
-        pytest.param(
-            0.1,
-            id="override",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="baseline_innovation_sd still moves the baseline's coefficient "
-                "priors",
-            ),
-        ),
-    ],
+    "baseline_innovation_sd", [None, 0.1], ids=["from-target", "override"]
 )
 def test_exog_prior_scales_with_each_series(brand_mmm_data, baseline_innovation_sd):
     """Each equation's exog prior sd is proportional to its series' scale.
@@ -535,10 +503,6 @@ def test_exog_prior_scales_with_each_series(brand_mmm_data, baseline_innovation_
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect's innovation-scale prior is not implemented yet",
-)
 @pytest.mark.parametrize(
     "volatility, observed_dists, tril_offdiag_sigma",
     [
@@ -590,11 +554,6 @@ def test_brand_metrics_keep_the_analysts_volatility_prior(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not check the baseline's entry of "
-    "innovation_scale_priors yet",
-)
 @pytest.mark.parametrize(
     "sigma_sd_beta, baseline_prior",
     [
@@ -647,10 +606,6 @@ def test_volatility_other_than_constant_is_refused_by_impulso(brand_mmm_data):
         mmm.build_model(brand_mmm_data["X"], brand_mmm_data["y"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect's innovation-scale prior is not implemented yet",
-)
 @pytest.mark.parametrize(
     "mmm_kwargs, baseline_innovation_sd, match",
     [
@@ -680,10 +635,6 @@ def test_building_without_a_target_raises(
         mmm.sample_prior_predictive(brand_mmm_data["X"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect's innovation-scale prior is not implemented yet",
-)
 def test_prior_predictive_without_a_target(brand_mmm_data):
     """A fixed target scale and ``baseline_innovation_sd`` replace ``y``.
 
