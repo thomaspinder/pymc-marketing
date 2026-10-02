@@ -673,27 +673,26 @@ def test_unsupported_mmm_raises_at_build(brand_mmm_data, mmm_kwargs, arrange, ma
         mmm.build_model(data["X"], data["y"])
 
 
-@pytest.mark.xfail(strict=True, reason="VARBaselineEffect does not check the MMM yet")
+@pytest.mark.xfail(
+    strict=True,
+    reason="VARBaselineEffect does not refuse a second VARBaselineEffect yet",
+)
 @pytest.mark.parametrize(
-    "other_kwargs, match",
+    "other_kwargs",
     [
+        pytest.param({}, id="same-series"),
+        pytest.param({"exog_names": []}, id="no-exog"),
         pytest.param(
-            {"endog_names": ["baseline", "awareness", "intent"]},
-            r"endog_names \['baseline', 'awareness', 'intent'\], but another "
-            r"VARBaselineEffect in the MMM has \['baseline', 'awareness', "
-            r"'consideration'\]",
-            id="other-endog",
+            {"endog_names": ["baseline", "awareness", "intent"]}, id="other-endog"
         ),
-        pytest.param(
-            {"exog_names": ["tv_spend"]},
-            r"exog_names \['tv_spend'\], but another VARBaselineEffect in the MMM has "
-            r"\['brand_spend'\]",
-            id="other-exog",
-        ),
+        pytest.param({"exog_names": ["tv_spend"]}, id="other-exog"),
     ],
 )
-def test_effects_over_other_series_raise_at_build(brand_mmm_data, other_kwargs, match):
-    """Impulso's coordinates are not prefixed, so the effects must share series."""
+def test_second_var_baseline_effect_raises(brand_mmm_data, other_kwargs):
+    """Over the same series, a second VAR would count the brand data twice.
+
+    Over any series, only the sum of the two baselines would be identified.
+    """
     brand_data = brand_mmm_data["brand_data"].assign(
         intent=lambda df: 2 * df["consideration"],
         tv_spend=lambda df: 1 - df["brand_spend"],
@@ -703,22 +702,10 @@ def test_effects_over_other_series_raise_at_build(brand_mmm_data, other_kwargs, 
     )
 
     with pytest.raises(
-        ValueError, match=rf"'tv_var' has {match}.*must name the same series"
+        ValueError,
+        match=rf"'{PREFIX}'.*at most one VARBaselineEffect.*\['tv_var'\]",
     ):
         mmm.build_model(brand_mmm_data["X"], brand_mmm_data["y"])
-
-
-@pytest.mark.parametrize(
-    "exog_names", [["brand_spend"], []], ids=["same-exog", "no-exog"]
-)
-def test_effects_over_the_same_series_build(brand_mmm_data, exog_names):
-    brand_data = brand_mmm_data["brand_data"]
-    mmm = make_mmm(make_effect(brand_data)).add_mu_effect(
-        make_effect(brand_data, prefix="tv_var", exog_names=exog_names)
-    )
-    mmm.build_model(brand_mmm_data["X"], brand_mmm_data["y"])
-
-    assert {f"{PREFIX}::latent", "tv_var::latent"} <= set(mmm.model.named_vars)
 
 
 @pytest.mark.slow
