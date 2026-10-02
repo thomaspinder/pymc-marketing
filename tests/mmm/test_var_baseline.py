@@ -1587,3 +1587,72 @@ def test_effects_compare_brand_data_with_pandas(
 
     assert (effect == other) is equal
     assert (make_mmm(effect) == make_mmm(other)) is equal
+
+
+MEASUREMENT_ONLY = (
+    rf"VARBaselineEffect '{PREFIX}' takes only the 30 dates the MMM was fitted on, "
+    "2024-01-01 to 2024-07-22, so prediction on new dates is not supported"
+)
+
+
+def later_dates(X: pd.DataFrame) -> pd.DataFrame:
+    """``X`` moved to as many dates right after the MMM's."""
+    return X.assign(date=X["date"] + pd.Timedelta(weeks=len(X)))
+
+
+@pytest.mark.xfail(
+    strict=True, reason="VARBaselineEffect does not refuse prediction on new dates yet"
+)
+@pytest.mark.parametrize("method", ["sample_posterior_predictive", "predict"])
+@pytest.mark.parametrize(
+    "arrange, kwargs",
+    [
+        pytest.param(later_dates, {}, id="later-dates"),
+        pytest.param(lambda X: X.iloc[10:20], {}, id="subset-of-training-dates"),
+        pytest.param(
+            later_dates,
+            {"include_last_observations": True},
+            id="include-last-observations",
+        ),
+        pytest.param(later_dates, {"clone_model": False}, id="no-clone"),
+    ],
+)
+def test_prediction_on_new_dates_raises(
+    fitted_mmm, brand_mmm_data, method, arrange, kwargs
+):
+    """The MMM refuses before it sets the new data, so its model keeps its dates."""
+    X = brand_mmm_data["X"]
+
+    with pytest.raises(NotImplementedError, match=MEASUREMENT_ONLY):
+        getattr(fitted_mmm, method)(arrange(X), progressbar=False, **kwargs)
+
+    np.testing.assert_array_equal(
+        np.asarray(fitted_mmm.model.coords["date"]), X["date"].to_numpy()
+    )
+
+
+def test_budget_optimizer_on_later_dates_ignores_the_baseline(
+    fitted_mmm, brand_mmm_data
+):
+    """The optimizer sets its own window, but evaluates only channel contributions.
+
+    The baseline does not enter them, so the window's dates need no brand data.
+    """
+    start = brand_mmm_data["X"]["date"].max() + pd.Timedelta(weeks=1)
+    optimizer = fitted_mmm.budget_optimizer(
+        start_date=start, end_date=start + pd.Timedelta(weeks=7)
+    )
+
+    result = optimizer.allocate_budget(total_budget=10.0)
+
+    assert result.scipy_result.success
+    np.testing.assert_allclose(result.budgets.sum(), 10.0)
+
+
+def test_do_on_the_channel_data(fitted_mmm):
+    """``pm.do`` clones the MMM's model, VAR included."""
+    channel_data = fitted_mmm.xarray_dataset["_channel"]
+
+    model = pm.do(fitted_mmm.model, {"channel_data": np.zeros(channel_data.shape)})
+
+    assert f"{PREFIX}_effect_contribution" in model.named_vars
