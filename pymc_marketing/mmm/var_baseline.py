@@ -268,8 +268,9 @@ class VARBaselineEffect(MuEffect):
     does posterior predictive sampling after loading. Channel incrementality is not
     supported yet. The budget optimizer runs on any window but ignores the baseline,
     as it should: brand spend is an exogenous input of the VAR, not a channel.
-    Posterior predictive sampling and ``predict`` on other dates are not supported,
-    and they fail inside PyTensor with an error that does not name the effect.
+    Posterior predictive sampling and ``predict`` on other dates, including
+    a subset of the fitted ones or with ``include_last_observations=True``, raise a
+    ``NotImplementedError``.
 
     The MMM must have no ``dims``, ``time_varying_intercept=False`` and
     ``link="identity"``, and building any other MMM raises. The VAR has no
@@ -697,6 +698,8 @@ class VARBaselineEffect(MuEffect):
             f"{self.prefix}_effect_contribution", baseline / target_scale
         )
 
+    supports_new_dates = False
+
     def set_data(  # type: ignore[override]
         self, mmm: "MMM", model: pm.Model, X: xr.Dataset
     ) -> None:
@@ -705,7 +708,8 @@ class VARBaselineEffect(MuEffect):
         The baseline exists only on the dates the MMM was fitted on, yet this does
         not raise on other dates. The budget optimizer calls it with its own window
         and evaluates only the channel contributions, which do not depend on the
-        baseline.
+        baseline. The MMM refuses prediction on new dates instead, because the effect
+        sets ``supports_new_dates`` to ``False``.
 
         Parameters
         ----------

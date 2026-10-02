@@ -1600,9 +1600,6 @@ def later_dates(X: pd.DataFrame) -> pd.DataFrame:
     return X.assign(date=X["date"] + pd.Timedelta(weeks=len(X)))
 
 
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect does not refuse prediction on new dates yet"
-)
 @pytest.mark.parametrize("method", ["sample_posterior_predictive", "predict"])
 @pytest.mark.parametrize(
     "arrange, kwargs",
