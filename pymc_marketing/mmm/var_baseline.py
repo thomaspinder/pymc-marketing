@@ -118,9 +118,9 @@ class VARBaselineEffect(MuEffect):
 
     The brand data sit beside the MMM's data rather than in ``X``. Brand trackers
     often cover other periods than the MMM, or come at another cadence, so they stay
-    out of ``X``. A forecast of the baseline would need new brand data anyway. The
-    brand data are therefore constants in the graph, not data in the MMM's
-    ``constant_data``.
+    out of ``X``, and the effect matches their rows to the MMM's dates. A forecast of
+    the baseline would need new brand data anyway. The brand data are therefore
+    constants in the graph, not data in the MMM's ``constant_data``.
 
     The VAR runs on the baseline in the target's original units and on the brand
     columns in their own units, centered on their means over the MMM's dates. The
@@ -148,9 +148,13 @@ class VARBaselineEffect(MuEffect):
     brand_data : pd.DataFrame
         The brand metrics and exogenous inputs, with the MMM's date column. Rows are
         matched to the MMM's dates on that column, so they can be in any order and
-        cover a longer period, but every MMM date needs exactly one row. The columns
-        named in ``endog_names`` and ``exog_names`` must be numeric and finite, and
-        vary over the MMM's dates. The effect keeps a copy of the frame.
+        cover other dates too. Construction checks only that the columns named in
+        ``endog_names`` and ``exog_names`` exist and are numeric. Building the MMM
+        checks that, on the MMM's dates, those columns are finite and vary, and that
+        there is exactly one row per MMM date. Rows on other dates are neither used
+        nor checked, so they may hold NaN or repeat a date. The dates must match the
+        MMM's in time-zone awareness: both naive or both aware. The effect keeps a
+        copy of the frame.
     baseline_name : str
         Name of the latent baseline in the VAR. It must not be a column of
         ``brand_data``.
@@ -267,6 +271,9 @@ class VARBaselineEffect(MuEffect):
     def model_post_init(self, context: Any, /) -> None:
         """Check ``var``, the names, and the columns of ``brand_data`` they name.
 
+        Only the columns' presence and dtypes are checked here. Their values matter
+        only on the MMM's dates, so :meth:`create_data` checks them there.
+
         Raises
         ------
         TypeError
@@ -275,10 +282,9 @@ class VARBaselineEffect(MuEffect):
             If ``endog_names`` does not start with ``baseline_name`` or has nothing
             after it, if ``baseline_name`` is a column of ``brand_data``, if a name
             appears more than once across ``endog_names`` and ``exog_names``, if a
-            column named in them is missing from ``brand_data``, is not numeric, has
-            a NaN or infinite value or is constant, or if ``var``'s prior has a
-            per-series ``own_lag_mean`` whose first entry is not
-            ``baseline_own_lag_mean``.
+            column named in them is missing from ``brand_data`` or is not numeric, or
+            if ``var``'s prior has a per-series ``own_lag_mean`` whose first entry is
+            not ``baseline_own_lag_mean``.
         """
         self._check_var()
         self._check_names()
@@ -332,14 +338,13 @@ class VARBaselineEffect(MuEffect):
             )
 
     def _check_brand_columns(self) -> None:
-        """Check the columns of ``brand_data`` that the VAR uses.
+        """Check that the columns the VAR uses are in ``brand_data`` and numeric.
 
         Raises
         ------
         ValueError
             If a column named in ``endog_names`` or ``exog_names`` is missing from
-            ``brand_data``, is not numeric, has a NaN or infinite value or is
-            constant.
+            ``brand_data`` or is not numeric.
         """
         named_columns = {
             "endog_names": self._observed_names,
@@ -351,20 +356,12 @@ class VARBaselineEffect(MuEffect):
                     f"Columns {missing} of {field} are missing in brand_data."
                 )
 
-        named_data = self.brand_data[self._column_names]
         if non_numeric := [
             name
-            for name, dtype in named_data.dtypes.items()
+            for name, dtype in self.brand_data[self._column_names].dtypes.items()
             if not pd.api.types.is_numeric_dtype(dtype)
         ]:
             raise ValueError(f"Columns {non_numeric} of brand_data are not numeric.")
-        finite = np.isfinite(named_data.to_numpy(dtype=float)).all(axis=0)
-        if non_finite := named_data.columns[~finite].tolist():
-            raise ValueError(
-                f"Columns {non_finite} of brand_data contain NaN or infinite values."
-            )
-        if constant_columns := named_data.columns[named_data.nunique() == 1].tolist():
-            raise ValueError(f"Columns {constant_columns} of brand_data are constant.")
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dict, without ``brand_data``."""
@@ -385,9 +382,17 @@ class VARBaselineEffect(MuEffect):
         ------
         ValueError
             If ``brand_data`` cannot be matched to the MMM's dates, or if a column
-            named in ``endog_names`` or ``exog_names`` is constant on them.
+            named in ``endog_names`` or ``exog_names`` has a NaN or infinite value on
+            them or is constant on them.
         """
         named_data = self._brand_data_on_mmm_dates(mmm)[self._column_names]
+        finite = np.isfinite(named_data.to_numpy(dtype=float)).all(axis=0)
+        if non_finite := named_data.columns[~finite].tolist():
+            raise ValueError(
+                f"VARBaselineEffect {self.prefix!r} needs finite brand data: columns "
+                f"{non_finite} of brand_data contain NaN or infinite values on the "
+                "MMM's dates."
+            )
         if constant_columns := named_data.columns[named_data.nunique() == 1].tolist():
             raise ValueError(
                 f"VARBaselineEffect {self.prefix!r} needs brand data that vary over "
@@ -493,6 +498,8 @@ class VARBaselineEffect(MuEffect):
     def _brand_data_on_mmm_dates(self, mmm: "MMM") -> pd.DataFrame:
         """Return the rows of ``brand_data`` on the MMM's dates, in the MMM's order.
 
+        Rows on other dates are not used, so they may repeat a date.
+
         Parameters
         ----------
         mmm : MMM
@@ -506,8 +513,9 @@ class VARBaselineEffect(MuEffect):
         Raises
         ------
         ValueError
-            If ``brand_data`` has no column named like the MMM's date column, has a
-            date more than once, or misses an MMM date.
+            If ``brand_data`` has no column named like the MMM's date column, if
+            exactly one of its dates and the MMM's has a time zone, or if it misses
+            an MMM date or has one more than once.
         """
         date_column = mmm.date_column
         if date_column not in self.brand_data.columns:
@@ -517,22 +525,46 @@ class VARBaselineEffect(MuEffect):
             )
 
         brand_dates = safe_to_datetime(self.brand_data[date_column], date_column)
+        mmm_dates = safe_to_datetime(mmm.model.coords["date"], "date")
+        if (brand_dates.tz is None) != (mmm_dates.tz is None):
+            brand_kind, mmm_kind = (
+                ("naive", "time-zone aware")
+                if brand_dates.tz is None
+                else ("time-zone aware", "naive")
+            )
+            raise ValueError(
+                f"VARBaselineEffect {self.prefix!r} cannot match brand_data to the MMM "
+                f"on {date_column!r}: brand_data's dates are {brand_kind} and the "
+                f"MMM's are {mmm_kind}. Convert one of them, e.g. drop the time zone "
+                "with .dt.tz_localize(None)."
+            )
+
+        # Rows on other dates may repeat a date, which `get_indexer` refuses, so they
+        # are dropped first.
+        on_mmm_dates = brand_dates.isin(mmm_dates)
+        brand_dates = brand_dates[on_mmm_dates]
         if brand_dates.has_duplicates:
             repeated = brand_dates[brand_dates.duplicated()].unique()
             raise ValueError(
                 f"VARBaselineEffect {self.prefix!r} needs one row of brand_data per "
-                f"date, but dates {_format_dates(repeated)} appear more than once."
+                f"MMM date, but dates {_format_dates(repeated)} appear more than once."
             )
 
-        mmm_dates = safe_to_datetime(mmm.model.coords["date"], "date")
         rows = brand_dates.get_indexer(mmm_dates)
         if (rows == -1).any():
             missing = mmm_dates[rows == -1]
-            raise ValueError(
+            message = (
                 f"VARBaselineEffect {self.prefix!r} has no brand_data for MMM dates "
                 f"{_format_dates(missing)}."
             )
-        return self.brand_data.iloc[rows]
+            if len(missing) == len(mmm_dates):
+                message += (
+                    " None of the MMM's dates is in brand_data: check that brand_data "
+                    "uses the same frequency and weekly anchor as the MMM, since "
+                    "W-SUN dates, for example, never match W-MON ones."
+                )
+            raise ValueError(message)
+        return self.brand_data[on_mmm_dates].iloc[rows]
 
     def _check_baseline_entries(self) -> None:
         """Check that ``var`` leaves the baseline's prior entries to the effect.
