@@ -34,9 +34,6 @@ def test_import_impulso_missing_raises(monkeypatch):
         _import_impulso()
 
 
-@pytest.mark.xfail(
-    strict=True, reason="_import_impulso does not check Impulso's version yet"
-)
 def test_import_impulso_too_old_raises(monkeypatch):
     """An Impulso older than the minimum is refused with the upgrade command."""
     from pymc_marketing.mmm.var_baseline import _import_impulso
@@ -79,7 +76,6 @@ def test_import_impulso_prerelease_of_the_minimum_raises(monkeypatch, installed)
     assert "pip install -U 'pymc-marketing[var]'" in message
 
 
-@pytest.mark.xfail(strict=True, reason="_MIN_IMPULSO does not exist yet")
 @pytest.mark.parametrize("extra", ["var", "test", "docs"])
 def test_min_impulso_matches_the_pins(extra):
     """The runtime minimum is the lower bound every extra pins Impulso to."""

@@ -14,15 +14,26 @@
 """Vector autoregression (VAR) baseline support, built on Impulso.
 
 `Impulso <https://github.com/QuantClimate/Impulso>`_ is an optional dependency of
-PyMC-Marketing. Install it with ``pip install 'pymc-marketing[var]'``. This module
-imports Impulso only when it is used, so PyMC-Marketing imports without it.
+PyMC-Marketing, and the VAR baseline needs ``impulso>=0.1.3``. Install it with
+``pip install 'pymc-marketing[var]'``. This module imports Impulso only when it is
+used, so PyMC-Marketing imports without it.
 """
 
+from importlib import metadata
 from types import ModuleType
+
+from packaging.version import Version
+
+# Keep in step with the impulso pins in pyproject.toml.
+_MIN_IMPULSO = "0.1.3"
 
 
 def _import_impulso() -> ModuleType:
     """Import Impulso, the optional dependency of the VAR baseline.
+
+    Impulso's version is read from its installed distribution. An Impulso without
+    one, such as a source checkout put on ``sys.path``, is used unchecked, since
+    its version cannot be known.
 
     Returns
     -------
@@ -32,7 +43,7 @@ def _import_impulso() -> ModuleType:
     Raises
     ------
     ImportError
-        If Impulso is not installed.
+        If Impulso is not installed, or is older than the minimum version.
     """
     try:
         import impulso
@@ -41,4 +52,14 @@ def _import_impulso() -> ModuleType:
             "impulso is required for the VAR baseline. "
             "Install it with: pip install 'pymc-marketing[var]'"
         ) from exc
+    try:
+        installed = metadata.version("impulso")
+    except metadata.PackageNotFoundError:
+        return impulso
+    if Version(installed) < Version(_MIN_IMPULSO):
+        raise ImportError(
+            f"impulso>={_MIN_IMPULSO} is required for the VAR baseline, but "
+            f"impulso {installed} is installed. "
+            "Upgrade it with: pip install -U 'pymc-marketing[var]'"
+        )
     return impulso
