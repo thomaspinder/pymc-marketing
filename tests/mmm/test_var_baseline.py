@@ -1655,10 +1655,6 @@ def test_do_on_the_channel_data(fitted_mmm):
     assert f"{PREFIX}_effect_contribution" in model.named_vars
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not take its contribution from the posterior yet",
-)
 @pytest.mark.parametrize("mmm_name", ["fitted_mmm", "loaded_mmm"])
 def test_incremental_contribution_is_the_channel_contribution(request, mmm_name):
     """The baseline does not depend on spend, so it adds nothing to the increment.

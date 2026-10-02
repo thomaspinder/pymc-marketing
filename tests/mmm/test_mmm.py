@@ -1934,9 +1934,6 @@ def test_sample_posterior_predictive_refuses_new_dates_for_effects_without_them(
         mmm.sample_posterior_predictive(X.iloc[-5:], extend_idata=False)
 
 
-@pytest.mark.xfail(
-    strict=True, reason="MMM.frozen_deterministics does not ask the mu effects yet"
-)
 def test_frozen_deterministics_include_the_mu_effects():
     """An effect's names join the MMM's own, such as its HSGP intercept's."""
     mmm = (
