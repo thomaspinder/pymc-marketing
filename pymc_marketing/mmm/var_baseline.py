@@ -265,9 +265,10 @@ class VARBaselineEffect(MuEffect):
     The baseline exists only on the dates the MMM is fitted on. On those dates,
     fitting, the contribution decomposition, the MMM's summaries, :meth:`fitted_var`
     and posterior predictive sampling work. Saving and loading the MMM work, and so
-    does posterior predictive sampling after loading. Channel incrementality is not
-    supported yet. The budget optimizer runs on any window but ignores the baseline,
-    as it should: brand spend is an exogenous input of the VAR, not a channel.
+    does posterior predictive sampling after loading. Channel incrementality works:
+    the baseline does not depend on spend, so it adds nothing to a channel's
+    increment. The budget optimizer runs on any window but ignores the baseline, as
+    it should: brand spend is an exogenous input of the VAR, not a channel.
     Posterior predictive sampling and ``predict`` on other dates, including
     a subset of the fitted ones or with ``include_last_observations=True``, raise a
     ``NotImplementedError``.
@@ -720,6 +721,21 @@ class VARBaselineEffect(MuEffect):
         X : xr.Dataset
             The new data.
         """
+
+    def frozen_deterministics(self) -> list[str]:
+        """Return the baseline's contribution, which is taken from the posterior.
+
+        The contribution is a latent path over the MMM's dates, so its posterior
+        draws are used as they are, as for the MMM's HSGP terms. Recomputing it would
+        fail in incrementality, which swaps in posterior draws only for ``pymc.dims``
+        variables, and Impulso's variables are not.
+
+        Returns
+        -------
+        list[str]
+            The name of the baseline's contribution.
+        """
+        return [self.contribution_var_name]
 
     def fitted_var(self, mmm: "MMM") -> "FittedVAR":
         """Return the fitted VAR as an Impulso ``FittedVAR`` in the data's units.
