@@ -17,6 +17,7 @@ import sys
 from functools import partial
 from unittest.mock import patch
 
+import arviz as az
 import numpy as np
 import pandas as pd
 import pymc as pm
@@ -1217,6 +1218,41 @@ def test_dynamic_multiplier_runs_on_the_fitted_var(fitted_mmm):
     np.testing.assert_allclose(draws.sel(horizon=1), A_1 @ B_exog)
 
 
+def true_cumulative_multiplier(horizon: int) -> float:
+    """The true baseline's cumulative response to a unit of brand spend.
+
+    It sums ``A^h b`` over ``h = 0, ..., horizon``, where ``A`` is the lag matrix
+    of ``make_brand_mmm_data`` and ``b`` its brand spend loadings, in the order of
+    ``ENDOG_NAMES``.
+    """
+    A = np.array([[0.5, 0.0, 0.6], [0.0, 0.9, 0.0], [0.0, 0.4, 0.8]])
+    b = np.array([0.0, 0.25, 0.0])
+    response = [np.linalg.matrix_power(A, h) @ b for h in range(horizon + 1)]
+    return float(np.sum(response, axis=0)[0])
+
+
+@pytest.mark.slow
+@pytest.mark.xfail(
+    strict=True, reason="VARBaselineEffect.fitted_var is not implemented yet"
+)
+def test_cumulative_multiplier_recovers_the_truth(nuts_fitted_mmm):
+    """The 26-week cumulative multiplier of brand spend on the baseline is recovered.
+
+    Its 94% HDI holds the true multiplier and excludes zero.
+    """
+    fitted = nuts_fitted_mmm.mu_effects[0].fitted_var(nuts_fitted_mmm)
+
+    multiplier = fitted.dynamic_multiplier(horizon=26)
+
+    cumulative = (
+        multiplier.idata.posterior_predictive["dynamic_multiplier"]
+        .sel(response="baseline", exog="brand_spend")
+        .sum("horizon")
+    )
+    lower, upper = az.hdi(cumulative, prob=0.94).to_numpy()
+    assert 0 < lower < true_cumulative_multiplier(26) < upper
+
+
 @pytest.mark.slow
 @pytest.mark.xfail(
     strict=True, reason="VARBaselineEffect.fitted_var is not implemented yet"
@@ -1249,7 +1285,7 @@ def test_uncentering_maps_var_fit_on_centered_data_onto_var_fit_on_raw_data(
     exog_mean = exog.mean(axis=0)
     sampler = NUTSSampler(
         chains=4,
-        cores=2,
+        cores=4,
         target_accept=0.95,
         random_seed=seed,
         nuts_sampler="pymc",
