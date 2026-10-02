@@ -209,7 +209,7 @@ coefficients.
 """
 
 from abc import ABC, abstractmethod
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Any, ClassVar, Literal, Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -437,7 +437,18 @@ class MuEffect(SerializableBaseModel, ABC):
 
     All mu_effects must inherit from this Pydantic BaseModel to ensure proper
     serialization and deserialization when saving/loading MMM models.
+
+    Attributes
+    ----------
+    supports_new_dates : bool
+        Whether the effect can be evaluated on dates other than the ones the MMM was
+        fitted on. ``True`` by default. An effect whose contribution exists only on
+        the fitted dates sets it to ``False`` as a class variable, and
+        :meth:`MMM.sample_posterior_predictive` and :meth:`MMM.predict` then refuse
+        other dates with a ``NotImplementedError`` naming the effect.
     """
+
+    supports_new_dates: ClassVar[bool] = True
 
     @abstractmethod
     def create_data(self, mmm: Model) -> None:

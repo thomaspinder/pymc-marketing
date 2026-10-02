@@ -16,7 +16,6 @@ import os
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -1829,13 +1828,13 @@ class _FittedDatesOnlyEffect(_ZeroEffect):
     """``_ZeroEffect``, declared to take only the dates the MMM was fitted on."""
 
     prefix: str = "fitted_dates_only"
-    supports_new_dates: ClassVar[bool] = False
+    supports_new_dates = False
 
 
 class _UnprefixedFittedDatesOnlyEffect(MuEffect):
     """``_FittedDatesOnlyEffect`` without a prefix."""
 
-    supports_new_dates: ClassVar[bool] = False
+    supports_new_dates = False
 
     def create_data(self, mmm) -> None:
         """No data of its own."""
@@ -1880,9 +1879,6 @@ serialization.register(
 
 @pytest.mark.xfail(
     strict=True, reason="The refusal does not say 'any other set of dates' yet"
-)
-@pytest.mark.xfail(
-    strict=True, reason="The MMM does not let mu effects refuse new dates yet"
 )
 @pytest.mark.parametrize(
     "effects, refused",

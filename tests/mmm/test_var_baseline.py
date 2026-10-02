@@ -1662,9 +1662,6 @@ def later_dates(X: pd.DataFrame) -> pd.DataFrame:
 @pytest.mark.xfail(
     strict=True, reason="The refusal does not say 'any other set of dates' yet"
 )
-@pytest.mark.xfail(
-    strict=True, reason="VARBaselineEffect does not refuse prediction on new dates yet"
-)
 @pytest.mark.parametrize("method", ["sample_posterior_predictive", "predict"])
 @pytest.mark.parametrize(
     "arrange, kwargs",
