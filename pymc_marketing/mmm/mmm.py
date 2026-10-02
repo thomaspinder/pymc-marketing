@@ -3187,6 +3187,46 @@ class MMM(RegressionModelBuilder):
         )
         return prior_predictive_samples
 
+    def _validate_mu_effects_support_dates(self, dataset: xr.Dataset) -> None:
+        """Refuse dates other than the fitted ones when a mu effect takes only those.
+
+        Parameters
+        ----------
+        dataset : xr.Dataset
+            The data to predict on, as the model will receive it.
+
+        Raises
+        ------
+        NotImplementedError
+            If the dates of ``dataset`` are not the dates the MMM was fitted on and
+            a mu effect has ``supports_new_dates=False``.
+        """
+        effects = [
+            effect
+            for effect in self.mu_effects
+            if not getattr(effect, "supports_new_dates", True)
+        ]
+        if not effects:
+            return
+
+        fitted_dates = safe_to_datetime(self.model_coords["date"], "date")
+        dates = safe_to_datetime(dataset.coords["date"].values, "date")
+        if dates.equals(fitted_dates):
+            return
+
+        names = []
+        for effect in effects:
+            name = type(effect).__name__
+            prefix = getattr(effect, "prefix", None)
+            names.append(name if prefix is None else f"{name} {prefix!r}")
+        verb = "takes" if len(names) == 1 else "take"
+        raise NotImplementedError(
+            f"{', '.join(names)} {verb} only the {len(fitted_dates)} dates the MMM "
+            f"was fitted on, {fitted_dates[0]:%Y-%m-%d} to "
+            f"{fitted_dates[-1]:%Y-%m-%d}, so prediction on new dates is not "
+            "supported."
+        )
+
     def sample_posterior_predictive(
         self,
         X: pd.DataFrame | xr.Dataset | None = None,  # type: ignore
@@ -3218,6 +3258,13 @@ class MMM(RegressionModelBuilder):
         -------
         xr.Dataset
             Posterior predictive samples.
+
+        Raises
+        ------
+        NotImplementedError
+            If ``X`` is not on the dates the MMM was fitted on and a mu effect takes
+            only those dates (``supports_new_dates=False``). With
+            ``include_last_observations=True`` the dates always differ.
         """
         # Update model data with xarray
         if X is None:
@@ -3226,6 +3273,7 @@ class MMM(RegressionModelBuilder):
             X=X,
             include_last_observations=include_last_observations,
         )
+        self._validate_mu_effects_support_dates(dataset_xarray)
         if names := self.frozen_deterministics:
             # This always clone
             model = deterministics_to_flat(self.model, names=names)
