@@ -33,6 +33,7 @@ import xarray as xr
 from packaging.version import Version
 from pydantic import Field, InstanceOf, field_validator
 from pytensor.xtensor.type import XTensorVariable
+from scipy.stats import halfnorm
 
 from pymc_marketing.mmm.additive_effect import MuEffect, safe_to_datetime
 from pymc_marketing.mmm.link import LinkFunction
@@ -44,6 +45,9 @@ if TYPE_CHECKING:
 
 # Keep in step with the impulso pins in pyproject.toml.
 _MIN_IMPULSO = "0.1.3"
+
+# A half-normal with scale U / _HALFNORMAL_Q95 exceeds U with probability 0.05.
+_HALFNORMAL_Q95 = float(halfnorm.ppf(0.95))
 
 
 def _import_impulso() -> ModuleType:
@@ -139,8 +143,12 @@ class VARBaselineEffect(MuEffect):
     The baseline's innovation standard deviation, ``{prefix}::sigma_sd_0``, has a
     half-normal prior with scale U / 1.96, so it exceeds U with prior probability
     0.05. U is ``baseline_innovation_sd`` or, by default, the residual standard
-    deviation of an AR(1) fit to the target. U is also the baseline's scale in the
-    priors on the VAR's lag and exogenous coefficients.
+    deviation of an AR(1) fit to the target. U sets this prior, but not the
+    baseline's scale in the priors on the VAR's lag and exogenous coefficients: that
+    is the target's AR(1) residual standard deviation, whatever
+    ``baseline_innovation_sd`` is. ``baseline_innovation_sd`` stands in for it only
+    when the target does not vary, as for the all-zero target the MMM is built on
+    without ``y``.
 
     The first ``lags`` values of the baseline have a normal prior with mean 0 and
     standard deviation ``U / sqrt(1 - baseline_own_lag_mean**2)``, in the target's
@@ -188,11 +196,15 @@ class VARBaselineEffect(MuEffect):
     baseline_innovation_sd : float, optional
         U, the bound on the baseline's innovation standard deviation, in the target's
         original units. It must be positive and finite. By default, U is the residual
-        standard deviation of an AR(1) fit to the target. It also sets the standard
-        deviation of the start of the baseline's path. The baseline's half-normal
-        prior takes the baseline's entry in the ``innovation_scale_priors`` of
-        ``var``'s constant volatility; the brand metrics keep theirs, or Impulso's
-        default ``HalfCauchy(sigma_sd_beta)`` when there are none.
+        standard deviation of an AR(1) fit to the target. It sets the baseline's
+        innovation prior, not the priors on the VAR's coefficients. It also sets the
+        standard deviation of the start of the baseline's path. The effect owns the
+        first entry of the ``innovation_scale_priors`` of ``var``'s ``Constant``
+        volatility, which have one entry per ``endog_names`` entry, the baseline's
+        first. If ``var`` sets them, that entry must be Impulso's default,
+        ``InnovationScalePrior(family="halfcauchy", scale=sigma_sd_beta)``, which the
+        effect replaces, or construction raises. The brand metrics keep their
+        entries, or Impulso's default when there are none.
 
     Notes
     -----
@@ -219,7 +231,9 @@ class VARBaselineEffect(MuEffect):
     sensitive the results are to it: refit with a different
     ``baseline_innovation_sd``, such as half the default, and compare
     ``{prefix}::sigma_sd_0``, the likelihood's noise and the baseline equation's
-    coefficients.
+    coefficients. Halving it changes the baseline's innovation prior but not the
+    priors on the VAR's coefficients, such as the baseline's loadings on the brand
+    metrics, whose scale comes from the target.
 
     The brand metrics' likelihood and the constraint that keeps the baseline
     stationary are potentials, which prior and posterior predictive sampling ignore.
@@ -317,9 +331,10 @@ class VARBaselineEffect(MuEffect):
             If ``endog_names`` does not start with ``baseline_name`` or has nothing
             after it, if ``baseline_name`` is a column of ``brand_data``, if a name
             appears more than once across ``endog_names`` and ``exog_names``, if a
-            column named in them is missing from ``brand_data`` or is not numeric, or
-            if ``var``'s prior has a per-series ``own_lag_mean`` whose first entry is
-            not ``baseline_own_lag_mean``.
+            column named in them is missing from ``brand_data`` or is not numeric, if
+            ``var``'s prior has a per-series ``own_lag_mean`` whose first entry is not
+            ``baseline_own_lag_mean``, or if its volatility has
+            ``innovation_scale_priors`` whose first entry is not Impulso's default.
         """
         self._check_var()
         self._check_names()
@@ -487,9 +502,10 @@ class VARBaselineEffect(MuEffect):
         Raises
         ------
         ValueError
-            If the target scale is not positive, or if U comes from the target and
-            is not positive, as for the all-zero target the MMM builds on when no
-            ``y`` is given.
+            If the target scale is not positive, or if the target's AR(1) residual
+            standard deviation is not positive and ``baseline_innovation_sd`` is not
+            set, as for the all-zero target the MMM builds on when no ``y`` is
+            given.
         """
         impulso = _import_impulso()
         brand_data = self._brand_data_on_mmm_dates(mmm)
@@ -524,7 +540,10 @@ class VARBaselineEffect(MuEffect):
                 n_lags=spec.lags,
                 endog_names=self.endog_names,
                 exog_names=self.exog_names or None,
-                endog_scales=[baseline_scale, *impulso.ar1_residual_sd(observed)],
+                endog_scales=[
+                    self._baseline_endog_scale(mmm),
+                    *impulso.ar1_residual_sd(observed),
+                ],
                 intercept_equations=self._observed_names,
                 latent_names=[self.baseline_name],
                 latent_init_sigma=latent_init_sigma,
@@ -658,39 +677,73 @@ class VARBaselineEffect(MuEffect):
         """
         if self.baseline_innovation_sd is not None:
             return self.baseline_innovation_sd
+        return self._baseline_endog_scale(mmm)
 
+    def _baseline_endog_scale(self, mmm: "MMM") -> float:
+        """Return the baseline's scale in the priors on the VAR's coefficients.
+
+        It is the baseline's entry in ``endog_scales``, which sets the Minnesota
+        prior's cross-lag scaling and the exogenous prior's scale. It does not
+        depend on ``baseline_innovation_sd``, so that changing U moves only the
+        innovation prior.
+
+        Parameters
+        ----------
+        mmm : MMM
+            The MMM model instance.
+
+        Returns
+        -------
+        float
+            The AR(1) residual standard deviation of the target, in the target's
+            original units, or ``baseline_innovation_sd`` if that is not positive,
+            as for the all-zero target the MMM builds on when no ``y`` is given.
+
+        Raises
+        ------
+        ValueError
+            If the target's AR(1) residual standard deviation is not positive and
+            ``baseline_innovation_sd`` is not set.
+        """
         impulso = _import_impulso()
         target = mmm.xarray_dataset["_target"].to_numpy()
-        (baseline_scale,) = impulso.ar1_residual_sd(target[:, None])
-        if not baseline_scale > 0:
-            raise ValueError(
-                f"VARBaselineEffect {self.prefix!r} needs a target that varies, or "
-                "baseline_innovation_sd: by default the AR(1) residual standard "
-                "deviation of the target bounds the baseline's innovations, and it is "
-                f"{baseline_scale}. The MMM builds on an all-zero target when no y is "
-                "given, as in sample_prior_predictive; pass y or set "
-                "baseline_innovation_sd."
-            )
-        return baseline_scale
+        (residual_sd,) = impulso.ar1_residual_sd(target[:, None])
+        if residual_sd > 0:
+            return float(residual_sd)
+        if self.baseline_innovation_sd is not None:
+            return self.baseline_innovation_sd
+        raise ValueError(
+            f"VARBaselineEffect {self.prefix!r} needs a target that varies, or "
+            "baseline_innovation_sd: the AR(1) residual standard deviation of the "
+            "target scales the baseline in the VAR's priors, and it is "
+            f"{residual_sd}. The MMM builds on an all-zero target when no y is "
+            "given, as in sample_prior_predictive; pass y or set "
+            "baseline_innovation_sd."
+        )
 
     def _check_baseline_entries(self) -> None:
         """Check that ``var`` leaves the baseline's prior entries to the effect.
 
         The effect sets the baseline's entry, the first, of a Minnesota prior's
-        ``own_lag_mean`` from ``baseline_own_lag_mean``. A per-series
-        ``own_lag_mean`` must therefore start with ``baseline_own_lag_mean``.
+        ``own_lag_mean`` from ``baseline_own_lag_mean``, and of a ``Constant``
+        volatility's ``innovation_scale_priors`` from U. A per-series
+        ``own_lag_mean`` must therefore start with ``baseline_own_lag_mean``, and
+        ``innovation_scale_priors`` with Impulso's default, which the effect
+        replaces.
 
         Raises
         ------
         ValueError
             If ``var``'s prior has a per-series ``own_lag_mean`` whose first entry is
-            not ``baseline_own_lag_mean``.
+            not ``baseline_own_lag_mean``, or if its volatility has
+            ``innovation_scale_priors`` whose first entry is not Impulso's default,
+            ``InnovationScalePrior(family="halfcauchy", scale=sigma_sd_beta)``.
         """
         impulso = _import_impulso()
         prior = self.var.resolved_prior
-        if not isinstance(prior, impulso.MinnesotaPrior):
-            return
-        own_lag_mean = prior.own_lag_mean
+        own_lag_mean = (
+            prior.own_lag_mean if isinstance(prior, impulso.MinnesotaPrior) else None
+        )
         baseline_mean = self.baseline_own_lag_mean
         if isinstance(own_lag_mean, tuple) and own_lag_mean[:1] != (baseline_mean,):
             raise ValueError(
@@ -700,6 +753,22 @@ class VARBaselineEffect(MuEffect):
                 "mean, and give the same value as the first entry."
             )
 
+        volatility = self.var.resolved_volatility
+        if not isinstance(volatility, impulso.Constant):
+            return
+        scale_priors = volatility.innovation_scale_priors
+        default = impulso.InnovationScalePrior(
+            family="halfcauchy", scale=volatility.sigma_sd_beta
+        )
+        if scale_priors is not None and scale_priors[:1] != (default,):
+            raise ValueError(
+                f"var's volatility has innovation_scale_priors {scale_priors}, but the "
+                "effect sets the baseline's entry, the first, from "
+                "baseline_innovation_sd. Set baseline_innovation_sd to bound the "
+                "baseline's innovation standard deviation, and make the first entry "
+                f"Impulso's default, {default!r}, which the effect replaces."
+            )
+
     def _build_spec(self, baseline_scale: float) -> "VAR":
         """Return ``var`` with the baseline's own-lag mean and innovation prior set.
 
@@ -707,9 +776,10 @@ class VARBaselineEffect(MuEffect):
         with ``baseline_own_lag_mean`` as the baseline's. A per-series one already
         starts with it, as construction checks. Only a ``MinnesotaPrior`` has an
         own-lag mean, so any other prior is used unchanged. The baseline's
-        innovation-scale prior is ``HalfNormal(U / 1.96)``, whose 95th percentile is
-        U. Only ``Constant`` volatility takes it, so any other volatility is used
-        unchanged and Impulso refuses it when building.
+        innovation-scale prior, the first entry of a ``Constant`` volatility's
+        ``innovation_scale_priors``, becomes the half-normal whose 95th percentile
+        is U. Any other volatility is used unchanged, and Impulso refuses it when
+        building.
 
         Parameters
         ----------
@@ -746,7 +816,7 @@ class VARBaselineEffect(MuEffect):
                     ),
                 ) * n_observed
             baseline_prior = impulso.InnovationScalePrior(
-                family="halfnormal", scale=baseline_scale / 1.96
+                family="halfnormal", scale=baseline_scale / _HALFNORMAL_Q95
             )
             update["volatility"] = volatility.model_copy(
                 update={"innovation_scale_priors": (baseline_prior, *observed_priors)}

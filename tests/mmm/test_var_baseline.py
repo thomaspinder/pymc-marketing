@@ -459,19 +459,7 @@ def test_baseline_innovation_sd_prior_is_half_normal_below_u(
 
 
 @pytest.mark.parametrize(
-    "baseline_innovation_sd",
-    [
-        pytest.param(None, id="from-target"),
-        pytest.param(
-            0.1,
-            id="override",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="baseline_innovation_sd still moves the baseline's coefficient "
-                "priors",
-            ),
-        ),
-    ],
+    "baseline_innovation_sd", [None, 0.1], ids=["from-target", "override"]
 )
 def test_exog_prior_scales_with_each_series(brand_mmm_data, baseline_innovation_sd):
     """Each equation's exog prior sd is proportional to its series' scale.
@@ -566,11 +554,6 @@ def test_brand_metrics_keep_the_analysts_volatility_prior(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not check the baseline's entry of "
-    "innovation_scale_priors yet",
-)
 @pytest.mark.parametrize(
     "sigma_sd_beta, baseline_prior",
     [
