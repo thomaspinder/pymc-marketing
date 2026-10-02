@@ -159,10 +159,6 @@ def test_baseline_own_lag_mean_must_keep_the_baseline_stationary(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not check brand_data at construction yet",
-)
 @pytest.mark.parametrize(
     "brand_columns, effect_kwargs, match",
     [
@@ -189,11 +185,6 @@ def test_baseline_own_lag_mean_must_keep_the_baseline_stationary(
             {},
             r"\['awareness'\] of brand_data contain NaN or infinite",
             id="inf",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect does not check brand_data for infinite "
-                "values yet",
-            ),
         ),
         pytest.param(
             {"brand_spend": 0.0},
@@ -248,7 +239,6 @@ def test_bad_brand_data_raises_at_construction(
         make_effect(brand_data, **effect_kwargs)
 
 
-@pytest.mark.xfail(strict=True, reason="VARBaselineEffect does not copy brand_data yet")
 def test_brand_data_is_copied_at_construction(brand_mmm_data):
     """Later edits to the caller's frame leave the effect's copy unchanged."""
     brand_data = brand_mmm_data["brand_data"].copy()
