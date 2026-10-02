@@ -464,10 +464,6 @@ def logp_on_mmm_dates(shorter_mmm_data) -> float:
     return initial_logp(make_mmm(make_effect(on_mmm_dates)), X, y)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not align brand_data to the MMM's dates yet",
-)
 @pytest.mark.parametrize(
     "date_column, arrange",
     [
@@ -497,11 +493,6 @@ def test_brand_data_is_matched_to_the_mmm_on_dates(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect checks every row of brand_data, not only those on the "
-    "MMM's dates, yet",
-)
 @pytest.mark.parametrize(
     "arrange",
     [
@@ -528,10 +519,6 @@ def test_brand_data_off_the_mmm_dates_is_not_checked(
     np.testing.assert_allclose(initial_logp(make_mmm(effect), X, y), logp_on_mmm_dates)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not align brand_data to the MMM's dates yet",
-)
 @pytest.mark.parametrize(
     "date_column, arrange, match",
     [
@@ -554,11 +541,6 @@ def test_brand_data_off_the_mmm_dates_is_not_checked(
             r"2024-02-26 and 17 more\. None of the MMM's dates is in brand_data: "
             "check that brand_data uses the same frequency and weekly anchor",
             id="every-date-missing",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect does not suggest checking the weekly anchor "
-                "yet",
-            ),
         ),
         pytest.param(
             "date",
@@ -566,10 +548,6 @@ def test_brand_data_off_the_mmm_dates_is_not_checked(
             rf"'{PREFIX}'.*brand_data's dates are time-zone aware and the MMM's are "
             r"naive.*\.dt\.tz_localize\(None\)",
             id="time-zone-aware",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect does not detect a time-zone mismatch yet",
-            ),
         ),
         pytest.param(
             "date",
@@ -583,11 +561,6 @@ def test_brand_data_off_the_mmm_dates_is_not_checked(
             rf"'{PREFIX}'.*dates 2024-01-29, 2024-02-05, 2024-02-12, 2024-02-19, "
             "2024-02-26 and 17 more appear more than once",
             id="many-repeated-dates",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect checks every row of brand_data, not only "
-                "those on the MMM's dates, yet",
-            ),
         ),
         pytest.param(
             "date",
@@ -595,11 +568,6 @@ def test_brand_data_off_the_mmm_dates_is_not_checked(
             rf"'{PREFIX}'.*\['awareness'\] of brand_data contain NaN or infinite "
             "values on the MMM's dates",
             id="nan-on-mmm-dates",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect checks every row of brand_data, not only "
-                "those on the MMM's dates, yet",
-            ),
         ),
         pytest.param(
             "date",
@@ -609,11 +577,6 @@ def test_brand_data_off_the_mmm_dates_is_not_checked(
             rf"'{PREFIX}'.*\['consideration'\] of brand_data contain NaN or infinite "
             "values on the MMM's dates",
             id="inf-on-mmm-dates",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect checks every row of brand_data, not only "
-                "those on the MMM's dates, yet",
-            ),
         ),
         pytest.param(
             "date",
@@ -623,11 +586,6 @@ def test_brand_data_off_the_mmm_dates_is_not_checked(
             rf"'{PREFIX}'.*\['brand_spend'\] of brand_data contain NaN or infinite "
             "values on the MMM's dates",
             id="minus-inf-on-mmm-dates",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect checks every row of brand_data, not only "
-                "those on the MMM's dates, yet",
-            ),
         ),
         pytest.param(
             "date",
