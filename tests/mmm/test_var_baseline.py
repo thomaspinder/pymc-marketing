@@ -251,10 +251,6 @@ def test_own_lag_prior_means(brand_mmm_data, prior, effect_kwargs, expected):
     assert effect.var is spec
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not check own_lag_mean's entry for the baseline yet",
-)
 @pytest.mark.parametrize(
     "own_lag_mean, baseline_own_lag_mean",
     [
@@ -280,10 +276,6 @@ def test_own_lag_mean_for_the_baseline_raises_at_construction(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not start the baseline at its stationary sd yet",
-)
 @pytest.mark.parametrize(
     "baseline_own_lag_mean", [0.0, 0.6], ids=["default", "own-lag-mean"]
 )

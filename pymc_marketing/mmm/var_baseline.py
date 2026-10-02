@@ -23,6 +23,7 @@ from importlib import metadata
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pandas as pd
 import pymc as pm
 import pymc.dims as pmd
@@ -91,11 +92,32 @@ class VARBaselineEffect(MuEffect):
     in two stages: an MMM whose time-varying intercept estimates the baseline, then a
     VAR on that estimate.
 
+    The brand data sit beside the MMM's data rather than in ``X``. Brand trackers
+    often cover other periods than the MMM, or come at another cadence, so they stay
+    out of ``X``. A forecast of the baseline would need new brand data anyway. The
+    brand data are therefore constants in the graph, not data in the MMM's
+    ``constant_data``.
+
     The VAR runs on the baseline in the target's original units and on the brand
     columns in their own units, centered on their means over the MMM's dates. The
     baseline equation has no intercept, so the baseline is a zero-mean deviation
     around the MMM's intercept. Its own first-lag coefficient has prior mean
     ``baseline_own_lag_mean`` rather than the Minnesota prior's random walk.
+
+    The baseline responds to the centered brand metrics and exogenous inputs, so the
+    MMM's intercept absorbs the brand's average effect. When a brand metric that
+    raises sales, such as consideration, is below its mean, as between brand
+    flights, it pushes the baseline below zero. The ``{prefix}_effect`` column of
+    ``mmm.compute_mean_contributions_over_time()`` is therefore a deviation, not the
+    sales the brand caused, and it sums to about zero over time.
+
+    The first ``lags`` values of the baseline have a normal prior with mean 0 and
+    standard deviation ``s / sqrt(1 - baseline_own_lag_mean**2)``, in the target's
+    original units, where ``s`` is the residual standard deviation of an AR(1) fit to
+    the target. That is the baseline's stationary standard deviation if it were an
+    AR(1) with own-lag coefficient ``baseline_own_lag_mean`` and innovation standard
+    deviation ``s``. The start of the path trades off against the MMM's intercept, so
+    it gets the scale of the rest of the path rather than a looser one.
 
     Parameters
     ----------
@@ -120,24 +142,37 @@ class VARBaselineEffect(MuEffect):
         Gaussian errors. It is not modified.
     baseline_own_lag_mean : float, default 0.0
         Prior mean of the baseline's own first-lag coefficient, strictly between -1
-        and 1 because the baseline is a stationary deviation. It replaces the
-        baseline's entry of a Minnesota prior's ``own_lag_mean``; the brand metrics
-        keep theirs. It has no effect with any other prior.
+        and 1 because the baseline is a stationary deviation. The effect sets the
+        baseline's entry of a Minnesota prior's ``own_lag_mean`` to it. A scalar
+        ``own_lag_mean`` applies to every brand metric. A per-series
+        ``own_lag_mean`` must start with this value, or construction raises. Any
+        other prior keeps its own-lag means. It also sets the standard deviation of
+        the start of the baseline's path.
 
     Notes
     -----
-    The effect is for measurement only. Fitting and the contribution decomposition on
-    the MMM's dates are supported; prediction on new dates and budget optimization
-    are not.
+    The baseline exists only on the dates the MMM is fitted on. On those dates,
+    fitting, the contribution decomposition, the MMM's summaries and posterior
+    predictive sampling work. Channel incrementality is not supported yet. The
+    budget optimizer runs on any window but ignores the baseline, as it should: brand
+    spend is an exogenous input of the VAR, not a channel. Posterior predictive
+    sampling and ``predict`` on other dates are not supported, and they fail inside
+    PyTensor with an error that does not name the effect.
 
     The brand metrics' likelihood and the constraint that keeps the baseline
     stationary are potentials, which prior and posterior predictive sampling ignore.
     Prior predictive baseline paths therefore come from the untruncated prior and can
-    explode, and the brand metrics are never drawn.
+    explode, and the brand metrics are never drawn. Posterior predictive sampling
+    warns that it ignores them, which is harmless here: it draws from the posterior,
+    which the potentials shaped.
 
-    Sampling is tested with PyMC's NUTS sampler and with nutpie only. The
-    stationarity constraint is untested on JAX, so ``nuts_sampler="numpyro"`` and
-    ``nuts_sampler="blackjax"`` are unsupported.
+    PyMC's NUTS sampler and nutpie work. ``nuts_sampler="numpyro"`` and
+    ``nuts_sampler="blackjax"`` fail at the first gradient evaluation with JAX's
+    ``NotImplementedError``: "Derivatives of non-symmetric eigenvectors are only
+    valid under assumptions on the input that JAX cannot check". JAX differentiates
+    the eigendecomposition in the stationarity constraint, which PyTensor's gradient
+    treats as a constant. The fix belongs in Impulso, see
+    https://github.com/QuantClimate/Impulso/issues/378.
 
     Impulso's coordinates, such as ``var``, ``coeff`` and ``exog``, are not
     prefixed, so every ``VARBaselineEffect`` in one MMM must name the same series.
@@ -179,7 +214,8 @@ class VARBaselineEffect(MuEffect):
         ).add_mu_effect(brand_var)
         mmm.fit(df[["date", "x1", "x2"]], df["y"])
 
-        # The baseline, in the target's units, next to the other components
+        # The baseline, a deviation in the target's units, next to the other
+        # components
         mmm.compute_mean_contributions_over_time()["brand_var_effect"]
     """
 
@@ -193,13 +229,23 @@ class VARBaselineEffect(MuEffect):
     baseline_own_lag_mean: float = Field(0.0, gt=-1, lt=1)
 
     def model_post_init(self, context: Any, /) -> None:
-        """Check that ``var`` is an Impulso ``VAR`` specification."""
+        """Check ``var``.
+
+        Raises
+        ------
+        TypeError
+            If ``var`` is not an Impulso ``VAR`` specification.
+        ValueError
+            If ``var``'s prior has a per-series ``own_lag_mean`` whose first entry is
+            not ``baseline_own_lag_mean``.
+        """
         impulso = _import_impulso()
         if not isinstance(self.var, impulso.VAR):
             raise TypeError(
                 "var must be an impulso.VAR specification, "
                 f"got {type(self.var).__name__}."
             )
+        self._check_baseline_entries()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dict, without ``brand_data``."""
@@ -270,6 +316,10 @@ class VARBaselineEffect(MuEffect):
             )
 
         target_scale = mmm.model["target_scale"]
+        # The start of the path trades off against the MMM's intercept, so rather
+        # than a loose scale it gets the baseline's stationary sd: that of an AR(1)
+        # with the baseline's own-lag prior mean and innovation sd `baseline_scale`.
+        latent_init_sigma = baseline_scale / np.sqrt(1 - self.baseline_own_lag_mean**2)
         spec = self._build_spec()
         with pm.Model(name=self.prefix):
             handles = spec.build_in_model(
@@ -281,7 +331,7 @@ class VARBaselineEffect(MuEffect):
                 endog_scales=[baseline_scale, *impulso.ar1_residual_sd(observed)],
                 intercept_equations=self._observed_names,
                 latent_names=[self.baseline_name],
-                latent_init_sigma=float(target_scale.get_value()),
+                latent_init_sigma=latent_init_sigma,
             )
 
         baseline = ptx.as_xtensor(handles.latent[:, 0], dims=("date",))
@@ -290,29 +340,71 @@ class VARBaselineEffect(MuEffect):
         )
 
     def set_data(self, mmm: Model, model: pm.Model, X: xr.Dataset) -> None:
-        """Do nothing: the brand data enter the graph as constants."""
+        """Do nothing: the brand data enter the graph as constants.
+
+        The baseline exists only on the dates the MMM was fitted on, yet this does
+        not raise on other dates. The budget optimizer calls it with its own window
+        and evaluates only the channel contributions, which do not depend on the
+        baseline.
+
+        Parameters
+        ----------
+        mmm : Model
+            The MMM model instance.
+        model : pm.Model
+            The PyMC model the new data are set on.
+        X : xr.Dataset
+            The new data.
+        """
 
     @property
     def _observed_names(self) -> list[str]:
         """The endogenous series observed in ``brand_data``: all but the baseline."""
         return self.endog_names[1:]
 
-    def _build_spec(self) -> "VAR":
-        """Return ``var`` with the baseline's own-lag prior mean set.
+    def _check_baseline_entries(self) -> None:
+        """Check that ``var`` leaves the baseline's prior entries to the effect.
 
-        Only a ``MinnesotaPrior`` has an own-lag mean, so any other prior is used
-        unchanged.
+        The effect sets the baseline's entry, the first, of a Minnesota prior's
+        ``own_lag_mean`` from ``baseline_own_lag_mean``. A per-series
+        ``own_lag_mean`` must therefore start with ``baseline_own_lag_mean``.
+
+        Raises
+        ------
+        ValueError
+            If ``var``'s prior has a per-series ``own_lag_mean`` whose first entry is
+            not ``baseline_own_lag_mean``.
         """
         impulso = _import_impulso()
         prior = self.var.resolved_prior
         if not isinstance(prior, impulso.MinnesotaPrior):
+            return
+        own_lag_mean = prior.own_lag_mean
+        baseline_mean = self.baseline_own_lag_mean
+        if isinstance(own_lag_mean, tuple) and own_lag_mean[:1] != (baseline_mean,):
+            raise ValueError(
+                f"var's prior has own_lag_mean {own_lag_mean}, but the effect sets the "
+                "baseline's entry, the first, from baseline_own_lag_mean, which is "
+                f"{baseline_mean}. Set baseline_own_lag_mean to the baseline's prior "
+                "mean, and give the same value as the first entry."
+            )
+
+    def _build_spec(self) -> "VAR":
+        """Return ``var`` with the baseline's own-lag prior mean set.
+
+        A scalar ``own_lag_mean`` of a Minnesota prior becomes one entry per series,
+        with ``baseline_own_lag_mean`` as the baseline's. A per-series one already
+        starts with it, as construction checks. Only a ``MinnesotaPrior`` has an
+        own-lag mean, so any other prior is used unchanged.
+        """
+        impulso = _import_impulso()
+        prior = self.var.resolved_prior
+        if not isinstance(prior, impulso.MinnesotaPrior) or isinstance(
+            prior.own_lag_mean, tuple
+        ):
             return self.var
 
-        own_lag_mean = prior.own_lag_mean
-        if isinstance(own_lag_mean, tuple):
-            observed_means = own_lag_mean[1:]
-        else:
-            observed_means = (own_lag_mean,) * len(self._observed_names)
+        observed_means = (prior.own_lag_mean,) * len(self._observed_names)
         prior = prior.model_copy(
             update={"own_lag_mean": (self.baseline_own_lag_mean, *observed_means)}
         )
