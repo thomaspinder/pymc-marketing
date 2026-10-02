@@ -212,7 +212,9 @@ def test_var_must_be_an_impulso_var_spec(brand_mmm_data):
 
 
 @pytest.mark.xfail(
-    strict=True, reason="Saving and loading VARBaselineEffect is not implemented yet"
+    strict=True,
+    reason="VARBaselineEffect does not say that the Minnesota-only prior is "
+    "temporary yet",
 )
 @pytest.mark.parametrize(
     "prior",
@@ -226,7 +228,7 @@ def test_prior_other_than_minnesota_raises_at_construction(brand_mmm_data, prior
     with pytest.raises(
         TypeError,
         match=rf"prior must be a MinnesotaPrior.*got {type(prior).__name__}.*only a "
-        "MinnesotaPrior is supported",
+        r"MinnesotaPrior is supported for now.*QuantClimate/Impulso/issues/379",
     ):
         make_effect(brand_mmm_data["brand_data"], var=spec)
 
@@ -1376,10 +1378,15 @@ def test_uncentering_maps_var_fit_on_centered_data_onto_var_fit_on_raw_data(
         )
 
 
-def save_and_load_effect(effect: VARBaselineEffect, path: Path) -> VARBaselineEffect:
-    """``effect`` through the JSON and netCDF that saving and loading an MMM use."""
+def save_and_load_effect(
+    effect: VARBaselineEffect, path: Path, **changes
+) -> VARBaselineEffect:
+    """``effect`` through the JSON and netCDF that saving and loading an MMM use.
+
+    ``changes`` replace entries of the saved dict.
+    """
     xr.DataTree.from_dict(effect.idata_groups()).to_netcdf(path)
-    data = json.loads(json.dumps(serialization.serialize(effect)))
+    data = json.loads(json.dumps(serialization.serialize(effect))) | changes
     with xr.open_datatree(path) as idata:
         return serialization.deserialize(data, DeserializationContext(idata=idata))
 
@@ -1432,6 +1439,30 @@ def test_missing_text_loads_as_an_empty_string(brand_mmm_data, tmp_path):
     pd.testing.assert_frame_equal(loaded.brand_data, brand_data.fillna({"source": ""}))
 
 
+@pytest.mark.xfail(
+    strict=True, reason="VARBaselineEffect does not record a format version yet"
+)
+def test_saved_effect_records_its_format_version(brand_mmm_data):
+    effect = make_effect(brand_mmm_data["brand_data"])
+
+    assert serialization.serialize(effect)["format_version"] == 1
+
+
+@pytest.mark.xfail(
+    strict=True, reason="VARBaselineEffect does not record a format version yet"
+)
+def test_loading_a_newer_format_version_raises(brand_mmm_data, tmp_path):
+    """A layout this version does not read is refused rather than misread."""
+    from pymc_marketing.serialization import SerializationError
+
+    effect = make_effect(brand_mmm_data["brand_data"])
+
+    with pytest.raises(
+        SerializationError, match=r"format version 2: .* reads only format version 1"
+    ):
+        save_and_load_effect(effect, tmp_path / "effect.nc", format_version=2)
+
+
 @pytest.fixture(scope="module")
 def saved_mmm(brand_mmm_data, tmp_path_factory) -> tuple[MMM, Path]:
     """A fitted MMM carrying the effect, and the file it is saved to.
@@ -1442,11 +1473,11 @@ def saved_mmm(brand_mmm_data, tmp_path_factory) -> tuple[MMM, Path]:
     """
     spec = VAR(
         lags=2,
-        prior=MinnesotaPrior(own_lag_mean=(1.0, 0.9, 0.8)),
+        prior=MinnesotaPrior(own_lag_mean=(0.3, 0.9, 0.8)),
         volatility=Constant(
             tril_offdiag_sigma=0.2,
             innovation_scale_priors=[
-                InnovationScalePrior(family="exponential", scale=5.0),
+                InnovationScalePrior(family="halfcauchy", scale=2.5),
                 InnovationScalePrior(family="halfnormal", scale=0.3),
                 InnovationScalePrior(family="exponential", scale=0.1),
             ],
@@ -1514,11 +1545,61 @@ def test_loaded_mmm_equals_the_saved_one(saved_mmm, loaded_mmm):
 @pytest.mark.xfail(
     strict=True, reason="Saving and loading VARBaselineEffect is not implemented yet"
 )
+def test_posterior_predictive_is_unchanged_by_loading(
+    brand_mmm_data, saved_mmm, loaded_mmm
+):
+    """On the training dates, through the graph that loading rebuilds and clones."""
+    X = brand_mmm_data["X"]
+    kwargs = {"extend_idata": False, "random_seed": seed, "progressbar": False}
+
+    loaded = loaded_mmm.sample_posterior_predictive(X, **kwargs)
+
+    saved = saved_mmm[0].sample_posterior_predictive(X, **kwargs)
+    assert loaded["date"].to_index().equals(pd.DatetimeIndex(X["date"]))
+    xr.testing.assert_equal(loaded, saved)
+
+
+@pytest.mark.xfail(
+    strict=True, reason="Saving and loading VARBaselineEffect is not implemented yet"
+)
 def test_loading_without_impulso_raises(saved_mmm, monkeypatch):
     monkeypatch.setitem(sys.modules, "impulso", None)
 
     with pytest.raises(ImportError, match=r"pip install 'pymc-marketing\[var\]'"):
         MMM.load(str(saved_mmm[1]))
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="VARBaselineEffect saves its brand data in the idata group that an "
+    "EventAdditiveEffect with the same prefix uses",
+)
+def test_mmm_with_events_of_the_same_prefix_saves_and_loads(brand_mmm_data, tmp_path):
+    """The brand data and the events are saved in different idata groups."""
+    from pymc_extras.prior import Prior
+
+    from pymc_marketing.mmm.events import EventEffect, GaussianBasis
+
+    df_events = pd.DataFrame(
+        {
+            "name": ["launch", "summer"],
+            "start_date": ["2024-02-05", "2024-06-03"],
+            "end_date": ["2024-02-19", "2024-06-17"],
+        }
+    )
+    effect = make_effect(brand_mmm_data["brand_data"])
+    events = EventEffect(
+        basis=GaussianBasis(), effect_size=Prior("Normal"), dims=(PREFIX,)
+    )
+    mmm = make_mmm(effect).add_events(df_events, prefix=PREFIX, effect=events)
+    with patch.object(pm, "sample", mock_sample):
+        mmm.fit(brand_mmm_data["X"], brand_mmm_data["y"], draws=20, random_seed=seed)
+    mmm.save(str(tmp_path / "mmm.nc"))
+
+    loaded_effect, loaded_events = MMM.load(str(tmp_path / "mmm.nc")).mu_effects
+
+    assert loaded_effect == effect
+    pd.testing.assert_frame_equal(loaded_events.df_events[df_events.columns], df_events)
 
 
 @pytest.mark.parametrize(
