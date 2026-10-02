@@ -185,6 +185,17 @@ def test_baseline_own_lag_mean_must_keep_the_baseline_stationary(
             id="nan",
         ),
         pytest.param(
+            {"awareness": lambda df: df["awareness"].mask(df.index == 7, np.inf)},
+            {},
+            r"\['awareness'\] of brand_data contain NaN or infinite",
+            id="inf",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="VARBaselineEffect does not check brand_data for infinite "
+                "values yet",
+            ),
+        ),
+        pytest.param(
             {"brand_spend": 0.0},
             {},
             r"\['brand_spend'\] of brand_data are constant",
@@ -235,6 +246,17 @@ def test_bad_brand_data_raises_at_construction(
 
     with pytest.raises(ValueError, match=match):
         make_effect(brand_data, **effect_kwargs)
+
+
+@pytest.mark.xfail(strict=True, reason="VARBaselineEffect does not copy brand_data yet")
+def test_brand_data_is_copied_at_construction(brand_mmm_data):
+    """Later edits to the caller's frame leave the effect's copy unchanged."""
+    brand_data = brand_mmm_data["brand_data"].copy()
+    effect = make_effect(brand_data)
+
+    brand_data.loc[3, "awareness"] = np.nan
+
+    pd.testing.assert_frame_equal(effect.brand_data, brand_mmm_data["brand_data"])
 
 
 def test_fit_adds_the_var_and_the_baseline_to_the_posterior(fitted_mmm):
