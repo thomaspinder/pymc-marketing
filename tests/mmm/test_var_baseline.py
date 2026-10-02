@@ -473,35 +473,64 @@ def test_baseline_innovation_sd_prior_is_half_normal_below_u(
 @pytest.mark.parametrize(
     "baseline_innovation_sd",
     [
-        None,
         pytest.param(
-            0.1,
+            None,
+            id="from-target",
             marks=pytest.mark.xfail(
                 strict=True,
-                reason="VARBaselineEffect's innovation-scale prior is not implemented yet",
+                reason="VARBaselineEffect's innovation-scale prior is not implemented "
+                "yet",
+            ),
+        ),
+        pytest.param(
+            0.1,
+            id="override",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="baseline_innovation_sd still moves the baseline's coefficient "
+                "priors",
             ),
         ),
     ],
-    ids=["from-target", "override"],
 )
 def test_exog_prior_scales_with_each_series(brand_mmm_data, baseline_innovation_sd):
     """Each equation's exog prior sd is proportional to its series' scale.
 
-    The baseline's scale is U, and each brand metric's is its AR(1) residual sd, so
-    the ratios pin the scales the VAR is built with.
+    Each brand metric's scale is its AR(1) residual sd, and the baseline's is the
+    target's, whatever ``baseline_innovation_sd`` is: U sets only the baseline's
+    innovation prior, ``HalfNormal(U / 1.96)``. So the ratios pin the scales the VAR
+    is built with, and overriding U moves the innovation prior but neither the
+    baseline's exog prior nor its Minnesota cross-lag prior, whose sd on brand metric
+    ``j``'s lag is its own-lag sd times the cross shrinkage times the baseline's scale
+    over ``j``'s.
     """
     brand_data = brand_mmm_data["brand_data"]
-    u = baseline_innovation_sd or ar1_residual_sd(brand_mmm_data["y"].to_frame())[0]
-    observed_scales = ar1_residual_sd(brand_data[ENDOG_NAMES[1:]])
+    target_scale = ar1_residual_sd(brand_mmm_data["y"].to_frame())[0]
+    u = baseline_innovation_sd or target_scale
+    observed_names = ENDOG_NAMES[1:]
+    observed_scales = ar1_residual_sd(brand_data[observed_names])
     effect = make_effect(brand_data, baseline_innovation_sd=baseline_innovation_sd)
-    B_exog = sample_prior(brand_mmm_data, effect, [f"{PREFIX}::B_exog"])[
-        f"{PREFIX}::B_exog"
-    ]
-    sd = B_exog.sel(exog="brand_spend").std(("chain", "draw"))
+    draws = sample_prior(
+        brand_mmm_data,
+        effect,
+        [f"{PREFIX}::sigma_sd_0", f"{PREFIX}::B", f"{PREFIX}::B_exog"],
+    )
+    prior = draws.std(("chain", "draw"))
+    sd = prior[f"{PREFIX}::B_exog"].sel(exog="brand_spend")
+    cross_lag_sd = prior[f"{PREFIX}::B"].sel(
+        var="baseline", coeff=[f"L1.{name}" for name in observed_names]
+    )
+    own_lag_sd = prior[f"{PREFIX}::B"].sel(var="baseline", coeff="L1.baseline")
 
+    assert_draws_follow(draws[f"{PREFIX}::sigma_sd_0"], stats.halfnorm(scale=u / 1.96))
     np.testing.assert_allclose(
-        sd.sel(var="baseline") / sd.sel(var=ENDOG_NAMES[1:]),
-        u / observed_scales,
+        sd.sel(var="baseline") / sd.sel(var=observed_names),
+        target_scale / observed_scales,
+        rtol=0.1,
+    )
+    np.testing.assert_allclose(
+        cross_lag_sd / own_lag_sd,
+        MinnesotaPrior().cross_shrinkage * target_scale / observed_scales,
         rtol=0.1,
     )
 
@@ -529,7 +558,7 @@ def test_exog_prior_scales_with_each_series(brand_mmm_data, baseline_innovation_
             Constant(
                 tril_offdiag_sigma=0.2,
                 innovation_scale_priors=[
-                    InnovationScalePrior(family="exponential", scale=5.0),
+                    InnovationScalePrior(family="halfcauchy", scale=2.5),
                     InnovationScalePrior(family="halfnormal", scale=0.3),
                     InnovationScalePrior(family="exponential", scale=0.1),
                 ],
@@ -559,6 +588,52 @@ def test_brand_metrics_keep_the_analysts_volatility_prior(
     np.testing.assert_allclose(
         prior[f"{PREFIX}::tril_offdiag"].std(), tril_offdiag_sigma, rtol=0.1
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="VARBaselineEffect does not check the baseline's entry of "
+    "innovation_scale_priors yet",
+)
+@pytest.mark.parametrize(
+    "sigma_sd_beta, baseline_prior",
+    [
+        pytest.param(
+            2.5,
+            InnovationScalePrior(family="exponential", scale=5.0),
+            id="other-family",
+        ),
+        pytest.param(
+            0.5,
+            InnovationScalePrior(family="halfcauchy", scale=2.5),
+            id="other-sigma-sd-beta",
+        ),
+    ],
+)
+def test_innovation_scale_prior_for_the_baseline_raises_at_construction(
+    brand_mmm_data, sigma_sd_beta, baseline_prior
+):
+    """The effect sets the baseline's entry from U, so the analyst's is the default.
+
+    Impulso's default, ``HalfCauchy(sigma_sd_beta)``, is the one the effect replaces.
+    """
+    volatility = Constant(
+        sigma_sd_beta=sigma_sd_beta,
+        innovation_scale_priors=[
+            baseline_prior,
+            *[InnovationScalePrior(family="halfnormal", scale=0.3)] * 2,
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"innovation_scale_priors.*sets the baseline's entry.*from "
+        r"baseline_innovation_sd.*Impulso's default, InnovationScalePrior\("
+        rf"family='halfcauchy', scale={sigma_sd_beta}\)",
+    ):
+        make_effect(
+            brand_mmm_data["brand_data"], var=VAR(lags=1, volatility=volatility)
+        )
 
 
 def test_volatility_other_than_constant_is_refused_by_impulso(brand_mmm_data):
@@ -610,14 +685,20 @@ def test_building_without_a_target_raises(
     reason="VARBaselineEffect's innovation-scale prior is not implemented yet",
 )
 def test_prior_predictive_without_a_target(brand_mmm_data):
-    """A fixed target scale and ``baseline_innovation_sd`` replace ``y``."""
+    """A fixed target scale and ``baseline_innovation_sd`` replace ``y``.
+
+    The baseline starts at sd U, in the target's original units, and its
+    contribution is in units of the fixed target scale.
+    """
     effect = make_effect(brand_mmm_data["brand_data"], baseline_innovation_sd=0.1)
     mmm = make_mmm(effect, scaling=FIXED_TARGET_SCALING)
     mmm.sample_prior_predictive(brand_mmm_data["X"], samples=4000, random_seed=seed)
     prior = mmm.idata.prior
 
     start = prior[f"{PREFIX}_effect_contribution"].isel(date=0)
-    np.testing.assert_allclose(start.std(), 1.0, atol=0.1)
+    np.testing.assert_allclose(
+        start.std(), 0.1 / FIXED_TARGET_SCALING["target"].value, rtol=0.05
+    )
     sigma = prior[f"{PREFIX}::sigma_sd_0"]
     np.testing.assert_allclose((sigma > 0.1).mean(), 0.05, atol=0.02)
 
