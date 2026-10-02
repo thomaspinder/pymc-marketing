@@ -213,9 +213,12 @@ class VARBaselineEffect(MuEffect):
     treats as a constant. The fix belongs in Impulso, see
     https://github.com/QuantClimate/Impulso/issues/378.
 
-    Impulso's coordinates, such as ``var``, ``coeff`` and ``exog``, are not
-    prefixed, so every ``VARBaselineEffect`` in one MMM must name the same series.
-    Impulso also adds a positional ``time`` coordinate that no variable uses.
+    An MMM takes at most one ``VARBaselineEffect``, and building an MMM with two
+    raises. Two baselines in one mean would be identified only through their sum,
+    and two VARs over the same brand series would count those series' likelihood
+    twice, so put every brand series in one VAR.
+
+    Impulso adds a positional ``time`` coordinate that no variable uses.
 
     References
     ----------
@@ -389,11 +392,22 @@ class VARBaselineEffect(MuEffect):
         Raises
         ------
         ValueError
-            If the MMM has ``dims``, a time-varying intercept or a link other than
-            the identity, if ``brand_data`` cannot be matched to the MMM's dates, or
-            if a column named in ``endog_names`` or ``exog_names`` has a NaN or
-            infinite value on them or is constant on them.
+            If the MMM has another ``VARBaselineEffect``, ``dims``, a time-varying
+            intercept or a link other than the identity, if ``brand_data`` cannot be
+            matched to the MMM's dates, or if a column named in ``endog_names`` or
+            ``exog_names`` has a NaN or infinite value on them or is constant on them.
         """
+        others = [
+            effect.prefix
+            for effect in mmm.mu_effects
+            if isinstance(effect, VARBaselineEffect) and effect is not self
+        ]
+        if others:
+            raise ValueError(
+                f"VARBaselineEffect {self.prefix!r}: an MMM takes at most one "
+                f"VARBaselineEffect, found others with prefixes {others}. Put every "
+                "brand series in one VAR."
+            )
         if mmm.dims:
             raise ValueError(
                 f"VARBaselineEffect {self.prefix!r} needs an MMM without dims, got "
@@ -449,24 +463,9 @@ class VARBaselineEffect(MuEffect):
         Raises
         ------
         ValueError
-            If another ``VARBaselineEffect`` in the MMM names other series, or if the
-            target's AR(1) residual standard deviation is not positive, as for the
-            all-zero target the MMM builds on when no ``y`` is given.
+            If the target's AR(1) residual standard deviation is not positive, as for
+            the all-zero target the MMM builds on when no ``y`` is given.
         """
-        for coord, field, names in [
-            ("var", "endog_names", self.endog_names),
-            ("exog", "exog_names", self.exog_names),
-        ]:
-            registered = mmm.model.coords.get(coord)
-            # Without exog_names, Impulso registers no exog coordinate.
-            if names and registered is not None and list(registered) != names:
-                raise ValueError(
-                    f"VARBaselineEffect {self.prefix!r} has {field} {names}, but "
-                    f"another VARBaselineEffect in the MMM has {list(registered)}: "
-                    "Impulso's coordinates are not prefixed, so every "
-                    "VARBaselineEffect in one MMM must name the same series."
-                )
-
         impulso = _import_impulso()
         brand_data = self._brand_data_on_mmm_dates(mmm)
         observed = brand_data[self._observed_names].to_numpy(dtype=float)

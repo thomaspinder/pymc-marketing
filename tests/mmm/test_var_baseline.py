@@ -672,10 +672,6 @@ def test_unsupported_mmm_raises_at_build(brand_mmm_data, mmm_kwargs, arrange, ma
         mmm.build_model(data["X"], data["y"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not refuse a second VARBaselineEffect yet",
-)
 @pytest.mark.parametrize(
     "other_kwargs",
     [
