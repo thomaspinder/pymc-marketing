@@ -175,24 +175,6 @@ def test_baseline_own_lag_mean_must_keep_the_baseline_stationary(
             id="text",
         ),
         pytest.param(
-            {"consideration": lambda df: df["consideration"].mask(df.index == 3)},
-            {},
-            r"\['consideration'\] of brand_data contain NaN",
-            id="nan",
-        ),
-        pytest.param(
-            {"awareness": lambda df: df["awareness"].mask(df.index == 7, np.inf)},
-            {},
-            r"\['awareness'\] of brand_data contain NaN or infinite",
-            id="inf",
-        ),
-        pytest.param(
-            {"brand_spend": 0.0},
-            {},
-            r"\['brand_spend'\] of brand_data are constant",
-            id="constant",
-        ),
-        pytest.param(
             {"baseline": 0.0},
             {},
             "baseline_name 'baseline' must not be a column of brand_data",
@@ -233,6 +215,7 @@ def test_baseline_own_lag_mean_must_keep_the_baseline_stationary(
 def test_bad_brand_data_raises_at_construction(
     brand_mmm_data, brand_columns, effect_kwargs, match
 ):
+    """Construction checks the names and columns; the values are checked at build."""
     brand_data = brand_mmm_data["brand_data"].assign(**brand_columns)
 
     with pytest.raises(ValueError, match=match):
@@ -516,6 +499,37 @@ def test_brand_data_is_matched_to_the_mmm_on_dates(
 
 @pytest.mark.xfail(
     strict=True,
+    reason="VARBaselineEffect checks every row of brand_data, not only those on the "
+    "MMM's dates, yet",
+)
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(
+            lambda df: df.assign(awareness=df["awareness"].mask(df.index == 2)),
+            id="nan",
+        ),
+        pytest.param(
+            lambda df: df.assign(
+                consideration=df["consideration"].mask(df.index == 28, np.inf)
+            ),
+            id="inf",
+        ),
+        pytest.param(lambda df: pd.concat([df, df.iloc[[0, 29]]]), id="repeated-date"),
+    ],
+)
+def test_brand_data_off_the_mmm_dates_is_not_checked(
+    shorter_mmm_data, logp_on_mmm_dates, arrange
+):
+    """Rows on dates the MMM does not have are not used, so they may hold anything."""
+    effect = make_effect(arrange(shorter_mmm_data["brand_data"]))
+    X, y = shorter_mmm_data["X"], shorter_mmm_data["y"]
+
+    np.testing.assert_allclose(initial_logp(make_mmm(effect), X, y), logp_on_mmm_dates)
+
+
+@pytest.mark.xfail(
+    strict=True,
     reason="VARBaselineEffect does not align brand_data to the MMM's dates yet",
 )
 @pytest.mark.parametrize(
@@ -530,28 +544,90 @@ def test_brand_data_is_matched_to_the_mmm_on_dates(
         pytest.param(
             "date",
             lambda df: df.drop(index=[6, 13]),
-            rf"'{PREFIX}'.*2024-02-12, 2024-04-01",
+            rf"'{PREFIX}'.*MMM dates 2024-02-12, 2024-04-01\.$",
             id="missing-dates",
         ),
         pytest.param(
             "date",
             lambda df: df.assign(date=df["date"] + pd.Timedelta(days=6)),
             rf"'{PREFIX}'.*MMM dates 2024-01-29, 2024-02-05, 2024-02-12, 2024-02-19, "
-            r"2024-02-26 and 17 more\.",
-            id="many-missing-dates",
+            r"2024-02-26 and 17 more\. None of the MMM's dates is in brand_data: "
+            "check that brand_data uses the same frequency and weekly anchor",
+            id="every-date-missing",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="VARBaselineEffect does not suggest checking the weekly anchor "
+                "yet",
+            ),
+        ),
+        pytest.param(
+            "date",
+            lambda df: df.assign(date=df["date"].dt.tz_localize("UTC")),
+            rf"'{PREFIX}'.*brand_data's dates are time-zone aware and the MMM's are "
+            r"naive.*\.dt\.tz_localize\(None\)",
+            id="time-zone-aware",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="VARBaselineEffect does not detect a time-zone mismatch yet",
+            ),
         ),
         pytest.param(
             "date",
             lambda df: pd.concat([df, df.iloc[[8]]]),
-            rf"'{PREFIX}'.*2024-02-26",
+            rf"'{PREFIX}'.*dates 2024-02-26 appear more than once",
             id="repeated-date",
         ),
         pytest.param(
             "date",
             lambda df: pd.concat([df, df]),
-            rf"'{PREFIX}'.*dates 2024-01-01, 2024-01-08, 2024-01-15, 2024-01-22, "
-            "2024-01-29 and 25 more appear more than once",
+            rf"'{PREFIX}'.*dates 2024-01-29, 2024-02-05, 2024-02-12, 2024-02-19, "
+            "2024-02-26 and 17 more appear more than once",
             id="many-repeated-dates",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="VARBaselineEffect checks every row of brand_data, not only "
+                "those on the MMM's dates, yet",
+            ),
+        ),
+        pytest.param(
+            "date",
+            lambda df: df.assign(awareness=df["awareness"].mask(df.index == 10)),
+            rf"'{PREFIX}'.*\['awareness'\] of brand_data contain NaN or infinite "
+            "values on the MMM's dates",
+            id="nan-on-mmm-dates",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="VARBaselineEffect checks every row of brand_data, not only "
+                "those on the MMM's dates, yet",
+            ),
+        ),
+        pytest.param(
+            "date",
+            lambda df: df.assign(
+                consideration=df["consideration"].mask(df.index == 12, np.inf)
+            ),
+            rf"'{PREFIX}'.*\['consideration'\] of brand_data contain NaN or infinite "
+            "values on the MMM's dates",
+            id="inf-on-mmm-dates",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="VARBaselineEffect checks every row of brand_data, not only "
+                "those on the MMM's dates, yet",
+            ),
+        ),
+        pytest.param(
+            "date",
+            lambda df: df.assign(
+                brand_spend=df["brand_spend"].mask(df.index == 20, -np.inf)
+            ),
+            rf"'{PREFIX}'.*\['brand_spend'\] of brand_data contain NaN or infinite "
+            "values on the MMM's dates",
+            id="minus-inf-on-mmm-dates",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="VARBaselineEffect checks every row of brand_data, not only "
+                "those on the MMM's dates, yet",
+            ),
         ),
         pytest.param(
             "date",
