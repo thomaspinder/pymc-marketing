@@ -34,6 +34,7 @@ from pymc_marketing.mmm import (
     GeometricAdstock,
     LogisticSaturation,
     SoftPlusHSGP,
+    TimeSliceCrossValidator,
     VARBaselineEffect,
 )
 from pymc_marketing.mmm.scaling import FixedScaling
@@ -1648,7 +1649,8 @@ def test_effects_compare_brand_data_with_pandas(
 
 MEASUREMENT_ONLY = (
     rf"VARBaselineEffect '{PREFIX}' takes only the 30 dates the MMM was fitted on, "
-    "2024-01-01 to 2024-07-22, so prediction on new dates is not supported"
+    "2024-01-01 to 2024-07-22, so prediction on any other set of dates is not "
+    "supported"
 )
 
 
@@ -1657,6 +1659,9 @@ def later_dates(X: pd.DataFrame) -> pd.DataFrame:
     return X.assign(date=X["date"] + pd.Timedelta(weeks=len(X)))
 
 
+@pytest.mark.xfail(
+    strict=True, reason="The refusal does not say 'any other set of dates' yet"
+)
 @pytest.mark.xfail(
     strict=True, reason="VARBaselineEffect does not refuse prediction on new dates yet"
 )
@@ -1688,22 +1693,71 @@ def test_prediction_on_new_dates_raises(
     )
 
 
-def test_budget_optimizer_on_later_dates_ignores_the_baseline(
-    fitted_mmm, brand_mmm_data
-):
-    """The optimizer sets its own window, but evaluates only channel contributions.
+BUDGET_WINDOWS = [
+    pytest.param("2024-07-29", "2024-09-16", id="later-dates"),
+    pytest.param("2024-03-11", "2024-04-29", id="fitted-dates"),
+]
 
-    The baseline does not enter them, so the window's dates need no brand data.
+
+@pytest.mark.parametrize("start_date, end_date", BUDGET_WINDOWS)
+def test_budget_optimizer_ignores_the_baseline(fitted_mmm, start_date, end_date):
+    """The optimizer sets its own window, but the default objective is the channels'.
+
+    The baseline does not enter their contributions, so the window's dates need no
+    brand data.
     """
-    start = brand_mmm_data["X"]["date"].max() + pd.Timedelta(weeks=1)
-    optimizer = fitted_mmm.budget_optimizer(
-        start_date=start, end_date=start + pd.Timedelta(weeks=7)
-    )
+    optimizer = fitted_mmm.budget_optimizer(start_date=start_date, end_date=end_date)
 
     result = optimizer.allocate_budget(total_budget=10.0)
 
     assert result.scipy_result.success
     np.testing.assert_allclose(result.budgets.sum(), 10.0)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="The budget optimizer does not refuse an objective that includes the "
+    "baseline yet",
+)
+@pytest.mark.parametrize("start_date, end_date", BUDGET_WINDOWS)
+def test_budget_objective_with_the_baseline_raises(fitted_mmm, start_date, end_date):
+    """The baseline is a path over all of the MMM's dates, so it fits no window.
+
+    Not even one within those dates.
+    """
+    with pytest.raises(
+        NotImplementedError,
+        match="'total_response_original_scale' is not supported, because it "
+        rf"includes the contribution of VARBaselineEffect '{PREFIX}', which exists "
+        r"only on the dates the MMM was fitted on\. The default objective",
+    ):
+        fitted_mmm.budget_optimizer(
+            start_date=start_date,
+            end_date=end_date,
+            response_variable="total_response_original_scale",
+        )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Time-slice cross-validation does not refuse VARBaselineEffect yet",
+)
+def test_time_slice_cross_validation_raises_before_fitting(brand_mmm_data):
+    """Each fold predicts on its test dates, so the first fold is not fitted at all."""
+    mmm = make_mmm(make_effect(brand_mmm_data["brand_data"]))
+    cv = TimeSliceCrossValidator(n_init=20, forecast_horizon=4, date_column="date")
+
+    with (
+        patch.object(pm, "sample", wraps=mock_sample) as sample,
+        pytest.raises(
+            NotImplementedError,
+            match="each fold's test dates, but the contribution of "
+            rf"VARBaselineEffect '{PREFIX}' exists only",
+        ),
+    ):
+        cv.run(brand_mmm_data["X"], brand_mmm_data["y"], mmm=mmm)
+
+    sample.assert_not_called()
 
 
 def test_do_on_the_channel_data(fitted_mmm):
