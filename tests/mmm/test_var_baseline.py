@@ -680,32 +680,59 @@ def test_unsupported_mmm_raises_at_build(brand_mmm_data, mmm_kwargs, arrange, ma
     reason="VARBaselineEffect does not refuse a second VARBaselineEffect yet",
 )
 @pytest.mark.parametrize(
-    "other_kwargs",
+    "make_other, match",
     [
-        pytest.param({}, id="same-series"),
-        pytest.param({"exog_names": []}, id="no-exog"),
         pytest.param(
-            {"endog_names": ["baseline", "awareness", "intent"]}, id="other-endog"
+            lambda effect, data: make_effect(data, prefix="tv_var"),
+            r"others with prefixes \['tv_var'\]",
+            id="same-series",
         ),
-        pytest.param({"exog_names": ["tv_spend"]}, id="other-exog"),
+        pytest.param(
+            lambda effect, data: make_effect(data, prefix="tv_var", exog_names=[]),
+            r"others with prefixes \['tv_var'\]",
+            id="no-exog",
+        ),
+        pytest.param(
+            lambda effect, data: make_effect(
+                data, prefix="tv_var", endog_names=["baseline", "awareness", "intent"]
+            ),
+            r"others with prefixes \['tv_var'\]",
+            id="other-endog",
+        ),
+        pytest.param(
+            lambda effect, data: make_effect(
+                data, prefix="tv_var", exog_names=["tv_spend"]
+            ),
+            r"others with prefixes \['tv_var'\]",
+            id="other-exog",
+        ),
+        pytest.param(
+            lambda effect, data: effect,
+            "added more than once",
+            id="same-instance",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="VARBaselineEffect does not refuse the same effect added twice "
+                "yet",
+            ),
+        ),
     ],
 )
-def test_second_var_baseline_effect_raises(brand_mmm_data, other_kwargs):
+def test_second_var_baseline_effect_raises(brand_mmm_data, make_other, match):
     """Over the same series, a second VAR would count the brand data twice.
 
-    Over any series, only the sum of the two baselines would be identified.
+    Over any series, only the sum of the two baselines would be identified. The
+    same effect added twice is refused too.
     """
     brand_data = brand_mmm_data["brand_data"].assign(
         intent=lambda df: 2 * df["consideration"],
         tv_spend=lambda df: 1 - df["brand_spend"],
     )
-    mmm = make_mmm(make_effect(brand_data)).add_mu_effect(
-        make_effect(brand_data, prefix="tv_var", **other_kwargs)
-    )
+    effect = make_effect(brand_data)
+    mmm = make_mmm(effect).add_mu_effect(make_other(effect, brand_data))
 
     with pytest.raises(
-        ValueError,
-        match=rf"'{PREFIX}'.*at most one VARBaselineEffect.*\['tv_var'\]",
+        ValueError, match=rf"'{PREFIX}'.*at most one VARBaselineEffect.*{match}"
     ):
         mmm.build_model(brand_mmm_data["X"], brand_mmm_data["y"])
 
