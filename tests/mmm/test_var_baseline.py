@@ -285,37 +285,39 @@ def test_own_lag_mean_for_the_baseline_raises_at_construction(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not start the baseline at its stationary sd yet",
-)
-@pytest.mark.parametrize(
-    "baseline_own_lag_mean", [0.0, 0.6], ids=["default", "own-lag-mean"]
-)
-def test_baseline_starts_at_its_stationary_sd(brand_mmm_data, baseline_own_lag_mean):
-    """The baseline's first ``n_lags`` values have the baseline's stationary sd.
-
-    In the target's original units, that is the sd of an AR(1) with the baseline's
-    own-lag prior mean and innovation sd U: U itself at the default mean of 0.
-    """
-    u = ar1_residual_sd(brand_mmm_data["y"].to_frame())[0]
-    effect = make_effect(
-        brand_mmm_data["brand_data"],
-        var=VAR(lags=2),
-        baseline_own_lag_mean=baseline_own_lag_mean,
-    )
+def sample_path_start(data: dict, effect) -> np.ndarray:
+    """Prior draws of the baseline's first two values, for an effect with two lags."""
     mmm = make_mmm(effect)
-    mmm.build_model(brand_mmm_data["X"], brand_mmm_data["y"])
+    mmm.build_model(data["X"], data["y"])
     latent = pm.sample_prior_predictive(
         draws=10_000,
         var_names=[f"{PREFIX}::latent"],
         model=mmm.model,
         random_seed=seed,
     ).prior[f"{PREFIX}::latent"]
-    start = latent.to_numpy()[:, :, :2, 0]
+    return latent.to_numpy()[:, :, :2, 0]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="VARBaselineEffect does not start the baseline at the target's sd yet",
+)
+@pytest.mark.parametrize(
+    "effect_kwargs",
+    [{}, {"baseline_own_lag_mean": 0.6}],
+    ids=["default", "own-lag-mean"],
+)
+def test_baseline_starts_at_the_targets_sd(brand_mmm_data, effect_kwargs):
+    """The baseline's first ``n_lags`` values have the target's sd.
+
+    That is the sd in the target's original units, with ``ddof=0``, whatever
+    ``baseline_own_lag_mean`` is.
+    """
+    effect = make_effect(brand_mmm_data["brand_data"], var=VAR(lags=2), **effect_kwargs)
+    start = sample_path_start(brand_mmm_data, effect)
 
     np.testing.assert_allclose(
-        start.std(axis=(0, 1)), u / np.sqrt(1 - baseline_own_lag_mean**2), rtol=0.05
+        start.std(axis=(0, 1)), brand_mmm_data["y"].std(ddof=0), rtol=0.05
     )
 
 
@@ -424,11 +426,17 @@ def nuts_fitted_mmm(long_brand_mmm_data) -> MMM:
 def test_nuts_recovers_the_baseline(nuts_fitted_mmm, long_brand_mmm_data):
     """The posterior mean baseline tracks the true one, with few divergences.
 
-    The correlation ignores the baseline's level, which the MMM intercept carries.
+    The correlation and the error ignore the baseline's level, which the MMM
+    intercept carries. The true path starts well below its mean, since the brand
+    flights lift it later, so a start-of-path prior that holds the start near zero
+    shows as a larger error over the first weeks than over the rest.
     """
     latent = nuts_fitted_mmm.idata.posterior[f"{PREFIX}::latent"]
     baseline = latent.mean(("chain", "draw")).to_numpy()[:, 0]
+    truth = long_brand_mmm_data["baseline"]
 
     assert int(nuts_fitted_mmm.idata.sample_stats["diverging"].sum()) <= 5
-    correlation = np.corrcoef(baseline, long_brand_mmm_data["baseline"])[0, 1]
+    correlation = np.corrcoef(baseline, truth)[0, 1]
     assert correlation > 0.95
+    error = np.abs((baseline - baseline.mean()) - (truth - truth.mean()))
+    assert error[:4].mean() < 2 * error[26:].mean()
