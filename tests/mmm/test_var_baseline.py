@@ -402,22 +402,26 @@ def test_own_lag_mean_for_the_baseline_raises_at_construction(
         )
 
 
-def sample_path_start(data: dict, effect) -> np.ndarray:
+def sample_path_start(
+    data: dict, effect: VARBaselineEffect, **mmm_kwargs
+) -> np.ndarray:
     """Prior draws of the baseline's first two values, for an effect with two lags."""
-    latent = sample_prior(data, effect, [f"{PREFIX}::latent"])[f"{PREFIX}::latent"]
+    latent = sample_prior(data, effect, [f"{PREFIX}::latent"], **mmm_kwargs)[
+        f"{PREFIX}::latent"
+    ]
     return latent.to_numpy()[:, :, :2, 0]
 
 
 @pytest.mark.parametrize(
     "effect_kwargs",
-    [{}, {"baseline_own_lag_mean": 0.6}],
-    ids=["default", "own-lag-mean"],
+    [{}, {"baseline_own_lag_mean": 0.6, "baseline_innovation_sd": 0.1}],
+    ids=["default", "own-lag-mean-and-u"],
 )
 def test_baseline_starts_at_the_targets_sd(brand_mmm_data, effect_kwargs):
     """The baseline's first ``n_lags`` values have the target's sd.
 
     That is the sd in the target's original units, with ``ddof=0``, whatever
-    ``baseline_own_lag_mean`` is.
+    ``baseline_own_lag_mean`` and U are.
     """
     effect = make_effect(brand_mmm_data["brand_data"], var=VAR(lags=2), **effect_kwargs)
     start = sample_path_start(brand_mmm_data, effect)
@@ -427,11 +431,40 @@ def test_baseline_starts_at_the_targets_sd(brand_mmm_data, effect_kwargs):
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="VARBaselineEffect's innovation-scale prior is not implemented yet",
+)
+@pytest.mark.parametrize(
+    "baseline_own_lag_mean", [0.0, 0.6], ids=["default", "own-lag-mean"]
+)
+def test_baseline_starts_at_its_stationary_sd_on_a_target_that_does_not_vary(
+    brand_mmm_data, baseline_own_lag_mean
+):
+    """On the all-zero target, the start's sd falls back to the stationary sd.
+
+    That is the sd of an AR(1) with the baseline's own-lag prior mean and innovation
+    sd U: U itself at the default mean of 0.
+    """
+    effect = make_effect(
+        brand_mmm_data["brand_data"],
+        var=VAR(lags=2),
+        baseline_own_lag_mean=baseline_own_lag_mean,
+        baseline_innovation_sd=0.1,
+    )
+    zero_target = brand_mmm_data | {"y": 0.0 * brand_mmm_data["y"]}
+    start = sample_path_start(zero_target, effect, scaling=FIXED_TARGET_SCALING)
+
+    np.testing.assert_allclose(
+        start.std(axis=(0, 1)), 0.1 / np.sqrt(1 - baseline_own_lag_mean**2), rtol=0.05
+    )
+
+
 def sample_prior(
-    data: dict, effect: VARBaselineEffect, var_names: list[str]
+    data: dict, effect: VARBaselineEffect, var_names: list[str], **mmm_kwargs
 ) -> xr.DataTree:
     """Prior draws of ``var_names`` from an MMM with ``effect``, built on ``data``."""
-    mmm = make_mmm(effect)
+    mmm = make_mmm(effect, **mmm_kwargs)
     mmm.build_model(data["X"], data["y"])
     return pm.sample_prior_predictive(
         draws=10_000, var_names=var_names, model=mmm.model, random_seed=seed
@@ -687,8 +720,9 @@ def test_building_without_a_target_raises(
 def test_prior_predictive_without_a_target(brand_mmm_data):
     """A fixed target scale and ``baseline_innovation_sd`` replace ``y``.
 
-    The baseline starts at sd U, in the target's original units, and its
-    contribution is in units of the fixed target scale.
+    The all-zero target does not vary, so the baseline starts at sd U, in the
+    target's original units, and its contribution is in units of the fixed target
+    scale.
     """
     effect = make_effect(brand_mmm_data["brand_data"], baseline_innovation_sd=0.1)
     mmm = make_mmm(effect, scaling=FIXED_TARGET_SCALING)
