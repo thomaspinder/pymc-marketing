@@ -212,6 +212,7 @@ from pymc_marketing.mmm import SoftPlusHSGP
 from pymc_marketing.mmm.additive_effect import (
     EventAdditiveEffect,
     MuEffect,
+    fitted_dates_only_effects,
     safe_to_datetime,
 )
 from pymc_marketing.mmm.budget_optimizer import (
@@ -3021,6 +3022,72 @@ class MMM(RegressionModelBuilder):
             )
         return DEFAULT_RESPONSE_VARIABLE
 
+    def _validate_objective_supports_dates(self, response_variable: str) -> None:
+        """Refuse an objective that includes a contribution tied to the fitted dates.
+
+        The optimizer evaluates its objective on the dates of its own window, and an
+        effect with ``supports_new_dates=False`` cannot be evaluated on any dates but
+        the fitted ones. So an objective that includes such an effect's contribution
+        is refused on every window. Whether it does is read from the fitted graph, as
+        in :meth:`_effects_carry_media_response`.
+
+        An effect that does not register its contribution under
+        ``contribution_var_name`` cannot be located, so it is taken to reach every
+        objective built from ``mu``, which sums every effect's term. That refuses
+        ``total_response_original_scale`` and keeps the default objective, which the
+        identity link builds from the channel contribution alone. The message offers
+        the default objective when the same check clears it.
+
+        Parameters
+        ----------
+        response_variable : str
+            The resolved objective.
+
+        Raises
+        ------
+        NotImplementedError
+            If ``response_variable`` includes the contribution of a mu effect with
+            ``supports_new_dates=False``.
+        """
+        effects = fitted_dates_only_effects(self.mu_effects)
+        if not effects or response_variable not in self.model.named_vars:
+            return
+
+        contributions = {}
+        for name, effect in effects:
+            try:
+                var_name = getattr(effect, "contribution_var_name", None)
+            except NotImplementedError:
+                var_name = None
+            if var_name not in self.model.named_vars:
+                var_name = "mu"
+            contributions[name] = self.model[var_name]
+
+        def reaches(objective: str) -> list[str]:
+            upstream = set(ancestors([self.model[objective]]))
+            return [name for name, var in contributions.items() if var in upstream]
+
+        reached = reaches(response_variable)
+        if not reached:
+            return
+
+        message = (
+            f"Budget optimization against {response_variable!r} is not supported, "
+            f"because it includes the contribution of {', '.join(reached)}, which "
+            "exists only on the dates the MMM was fitted on."
+        )
+        default = DEFAULT_RESPONSE_VARIABLE
+        if (
+            response_variable != default
+            and default in self.model.named_vars
+            and not reaches(default)
+        ):
+            message += (
+                f" The default objective, {default!r}, does not include that "
+                "contribution."
+            )
+        raise NotImplementedError(message)
+
     def budget_optimizer(
         self,
         start_date: str | pd.Timestamp,
@@ -3063,6 +3130,14 @@ class MMM(RegressionModelBuilder):
         -------
         BudgetOptimizer
             A configured optimizer ready for :meth:`BudgetOptimizer.allocate_budget`.
+
+        Raises
+        ------
+        NotImplementedError
+            If the objective, ``response_variable``, includes the contribution of a
+            mu effect that takes only the dates the MMM was fitted on
+            (``supports_new_dates=False``), as ``total_response_original_scale``
+            does. This holds on any window, including one within the fitted dates.
         """
         from pymc_marketing.mmm.budget_optimizer import BudgetOptimizer
 
@@ -3085,6 +3160,7 @@ class MMM(RegressionModelBuilder):
         kwargs["response_variable"] = self._resolve_response_variable(
             kwargs.get("response_variable")
         )
+        self._validate_objective_supports_dates(kwargs["response_variable"])
 
         return BudgetOptimizer(
             model=pymc_model,
@@ -3201,12 +3277,8 @@ class MMM(RegressionModelBuilder):
             If the dates of ``dataset`` are not the dates the MMM was fitted on and
             a mu effect has ``supports_new_dates=False``.
         """
-        effects = [
-            effect
-            for effect in self.mu_effects
-            if not getattr(effect, "supports_new_dates", True)
-        ]
-        if not effects:
+        names = [name for name, _ in fitted_dates_only_effects(self.mu_effects)]
+        if not names:
             return
 
         fitted_dates = safe_to_datetime(self.model_coords["date"], "date")
@@ -3214,17 +3286,12 @@ class MMM(RegressionModelBuilder):
         if dates.equals(fitted_dates):
             return
 
-        names = []
-        for effect in effects:
-            name = type(effect).__name__
-            prefix = getattr(effect, "prefix", None)
-            names.append(name if prefix is None else f"{name} {prefix!r}")
         verb = "takes" if len(names) == 1 else "take"
         raise NotImplementedError(
             f"{', '.join(names)} {verb} only the {len(fitted_dates)} dates the MMM "
             f"was fitted on, {fitted_dates[0]:%Y-%m-%d} to "
-            f"{fitted_dates[-1]:%Y-%m-%d}, so prediction on new dates is not "
-            "supported."
+            f"{fitted_dates[-1]:%Y-%m-%d}, so prediction on any other set of dates "
+            "is not supported."
         )
 
     def sample_posterior_predictive(
@@ -4624,6 +4691,15 @@ class BudgetOptimizerWrapper(OptimizerCompatibleModelWrapper):
             Result object with ``budgets``, ``scipy_result``, ``optimized_vars``
             and ``callback_info`` attributes. Iterating it yields
             ``(budgets, scipy_result)``, so two-element unpacking keeps working.
+
+        Raises
+        ------
+        TypeError
+            If ``cost_per_unit`` is neither a DataFrame nor a DataArray.
+        NotImplementedError
+            If ``response_variable`` includes the contribution of a mu effect that
+            takes only the dates the MMM was fitted on (``supports_new_dates=False``),
+            as ``total_response_original_scale`` does.
         """
         from pymc_marketing.mmm.budget_optimizer import BudgetOptimizer
 
@@ -4649,12 +4725,15 @@ class BudgetOptimizerWrapper(OptimizerCompatibleModelWrapper):
                 stacklevel=2,
             )
 
+        response_variable = self.model_class._resolve_response_variable(
+            response_variable
+        )
+        self.model_class._validate_objective_supports_dates(response_variable)
+
         allocator = BudgetOptimizer(
             num_periods=self.num_periods,
             utility_function=utility_function,
-            response_variable=self.model_class._resolve_response_variable(
-                response_variable
-            ),
+            response_variable=response_variable,
             constraints=constraints,
             budgets_to_optimize=budgets_to_optimize,
             budget_distribution_over_period=budget_distribution_over_period,

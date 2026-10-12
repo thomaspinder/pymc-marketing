@@ -1659,9 +1659,6 @@ def later_dates(X: pd.DataFrame) -> pd.DataFrame:
     return X.assign(date=X["date"] + pd.Timedelta(weeks=len(X)))
 
 
-@pytest.mark.xfail(
-    strict=True, reason="The refusal does not say 'any other set of dates' yet"
-)
 @pytest.mark.parametrize("method", ["sample_posterior_predictive", "predict"])
 @pytest.mark.parametrize(
     "arrange, kwargs",
@@ -1711,11 +1708,6 @@ def test_budget_optimizer_ignores_the_baseline(fitted_mmm, start_date, end_date)
     np.testing.assert_allclose(result.budgets.sum(), 10.0)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="The budget optimizer does not refuse an objective that includes the "
-    "baseline yet",
-)
 @pytest.mark.parametrize("start_date, end_date", BUDGET_WINDOWS)
 def test_budget_objective_with_the_baseline_raises(fitted_mmm, start_date, end_date):
     """The baseline is a path over all of the MMM's dates, so it fits no window.
@@ -1735,10 +1727,6 @@ def test_budget_objective_with_the_baseline_raises(fitted_mmm, start_date, end_d
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Time-slice cross-validation does not refuse VARBaselineEffect yet",
-)
 def test_time_slice_cross_validation_raises_before_fitting(brand_mmm_data):
     """Each fold predicts on its test dates, so the first fold is not fitted at all."""
     mmm = make_mmm(make_effect(brand_mmm_data["brand_data"]))
