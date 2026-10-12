@@ -289,10 +289,6 @@ def sample_path_start(data: dict, effect) -> np.ndarray:
     return latent.to_numpy()[:, :, :2, 0]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="VARBaselineEffect does not start the baseline at the target's sd yet",
-)
 @pytest.mark.parametrize(
     "effect_kwargs",
     [{}, {"baseline_own_lag_mean": 0.6}],

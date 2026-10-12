@@ -120,13 +120,12 @@ class VARBaselineEffect(MuEffect):
     ``mmm.compute_mean_contributions_over_time()`` is therefore a deviation, not the
     sales the brand caused, and it sums to about zero over time.
 
-    The first ``lags`` values of the baseline have a normal prior with mean 0 and
-    standard deviation ``s / sqrt(1 - baseline_own_lag_mean**2)``, in the target's
-    original units, where ``s`` is the residual standard deviation of an AR(1) fit to
-    the target. That is the baseline's stationary standard deviation if it were an
-    AR(1) with own-lag coefficient ``baseline_own_lag_mean`` and innovation standard
-    deviation ``s``. The start of the path trades off against the MMM's intercept, so
-    it gets the scale of the rest of the path rather than a looser one.
+    The first ``lags`` values of the baseline have a normal prior with mean 0 whose
+    standard deviation is the target's, in the target's original units: a
+    data-derived scale on the order of the baseline's marginal standard deviation,
+    since the baseline is a component of the target. The start of the path trades
+    off against the MMM's intercept, so it gets the scale of the rest of the path
+    rather than a looser one.
 
     Parameters
     ----------
@@ -155,8 +154,7 @@ class VARBaselineEffect(MuEffect):
         baseline's entry of a Minnesota prior's ``own_lag_mean`` to it. A scalar
         ``own_lag_mean`` applies to every brand metric. A per-series
         ``own_lag_mean`` must start with this value, or construction raises. Any
-        other prior keeps its own-lag means. It also sets the standard deviation of
-        the start of the baseline's path.
+        other prior keeps its own-lag means.
 
     Notes
     -----
@@ -325,10 +323,7 @@ class VARBaselineEffect(MuEffect):
             )
 
         target_scale = mmm.model["target_scale"]
-        # The start of the path trades off against the MMM's intercept, so rather
-        # than a loose scale it gets the baseline's stationary sd: that of an AR(1)
-        # with the baseline's own-lag prior mean and innovation sd `baseline_scale`.
-        latent_init_sigma = baseline_scale / np.sqrt(1 - self.baseline_own_lag_mean**2)
+        latent_init_sigma = self._baseline_start_sd(mmm, baseline_scale)
         spec = self._build_spec()
         with pm.Model(name=self.prefix):
             handles = spec.build_in_model(
@@ -370,6 +365,33 @@ class VARBaselineEffect(MuEffect):
     def _observed_names(self) -> list[str]:
         """The endogenous series observed in ``brand_data``: all but the baseline."""
         return self.endog_names[1:]
+
+    def _baseline_start_sd(self, mmm: Model, baseline_scale: float) -> float:
+        """Return the standard deviation of the baseline's first ``lags`` values.
+
+        Parameters
+        ----------
+        mmm : Model
+            The MMM model instance.
+        baseline_scale : float
+            The residual standard deviation of an AR(1) fit to the target, in the
+            target's original units.
+
+        Returns
+        -------
+        float
+            The target's standard deviation, in its original units. If that is not
+            positive and finite, ``baseline_scale / sqrt(1 - baseline_own_lag_mean**2)``
+            instead.
+        """
+        target_sd = float(np.std(mmm.xarray_dataset["_target"].to_numpy()))
+        # Data-derived, the target's sd is on the order of the baseline's marginal sd
+        # when the baseline is a component of the target. A scale from the target's
+        # AR(1) residual sd would leave out what the brand metrics pass into the
+        # baseline.
+        if np.isfinite(target_sd) and target_sd > 0:
+            return target_sd
+        return baseline_scale / np.sqrt(1 - self.baseline_own_lag_mean**2)
 
     def _check_baseline_entries(self) -> None:
         """Check that ``var`` leaves the baseline's prior entries to the effect.
