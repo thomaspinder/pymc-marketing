@@ -51,11 +51,6 @@ def test_import_impulso_too_old_raises(monkeypatch):
     assert "Pre-releases" not in message
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="_import_impulso does not say that pre-releases of the minimum are "
-    "refused yet",
-)
 @pytest.mark.parametrize("installed", ["0.1.3.dev4", "0.1.3rc1"])
 def test_import_impulso_prerelease_of_the_minimum_raises(monkeypatch, installed):
     """A pre-release of the minimum is refused, and the message says why.

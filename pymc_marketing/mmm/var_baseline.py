@@ -24,7 +24,7 @@ from types import ModuleType
 
 from packaging.version import Version
 
-# Keep in step with the impulso pins in pyproject.toml.
+# The lower bound of the impulso pins in pyproject.toml; a test keeps them in step.
 _MIN_IMPULSO = "0.1.3"
 
 
@@ -33,7 +33,9 @@ def _import_impulso() -> ModuleType:
 
     Impulso's version is read from its installed distribution. An Impulso without
     one, such as a source checkout put on ``sys.path``, is used unchecked, since
-    its version cannot be known.
+    its version cannot be known. A pre-release of the minimum version, such as a
+    development build made before the release was tagged, is older than it and is
+    refused, since it may lack what the release adds.
 
     Returns
     -------
@@ -56,10 +58,17 @@ def _import_impulso() -> ModuleType:
         installed = metadata.version("impulso")
     except metadata.PackageNotFoundError:
         return impulso
-    if Version(installed) < Version(_MIN_IMPULSO):
+    version = Version(installed)
+    if version < Version(_MIN_IMPULSO):
+        prerelease = (
+            f"Pre-releases of {_MIN_IMPULSO} are refused. "
+            if version.is_prerelease
+            and Version(version.base_version) == Version(_MIN_IMPULSO)
+            else ""
+        )
         raise ImportError(
             f"impulso>={_MIN_IMPULSO} is required for the VAR baseline, but "
-            f"impulso {installed} is installed. "
+            f"impulso {installed} is installed. {prerelease}"
             "Upgrade it with: pip install -U 'pymc-marketing[var]'"
         )
     return impulso
