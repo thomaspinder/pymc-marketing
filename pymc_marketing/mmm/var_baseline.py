@@ -164,7 +164,11 @@ class VARBaselineEffect(MuEffect):
     data-derived scale on the order of the baseline's marginal standard deviation,
     since the baseline is a component of the target. The start of the path trades
     off against the MMM's intercept, so it gets the scale of the rest of the path
-    rather than a looser one.
+    rather than a looser one. When the target does not vary, as for the all-zero
+    target the MMM builds on without ``y``, the standard deviation is
+    ``U / sqrt(1 - baseline_own_lag_mean**2)`` instead. That is the baseline's
+    stationary standard deviation if it were an AR(1) with own-lag coefficient
+    ``baseline_own_lag_mean`` and innovation standard deviation U.
 
     Parameters
     ----------
@@ -200,13 +204,15 @@ class VARBaselineEffect(MuEffect):
         baseline's entry of a Minnesota prior's ``own_lag_mean`` to it. A scalar
         ``own_lag_mean`` applies to every brand metric. A per-series
         ``own_lag_mean`` must start with this value, or construction raises. Any
-        other prior keeps its own-lag means.
+        other prior keeps its own-lag means. When the target does not vary, it also
+        sets the standard deviation of the start of the baseline's path.
     baseline_innovation_sd : float, optional
         U, the bound on the baseline's innovation standard deviation, in the target's
         original units. It must be positive and finite. By default, U is the residual
         standard deviation of an AR(1) fit to the target. It sets the baseline's
-        innovation prior, not the priors on the VAR's coefficients. It also sets the
-        standard deviation of the start of the baseline's path. The effect owns the
+        innovation prior, not the priors on the VAR's coefficients. It sets the
+        standard deviation of the start of the baseline's path only when the target
+        does not vary, as for the all-zero target without ``y``. The effect owns the
         first entry of the ``innovation_scale_priors`` of ``var``'s ``Constant``
         volatility, which have one entry per ``endog_names`` entry, the baseline's
         first. If ``var`` sets them, that entry must be Impulso's default,
@@ -239,9 +245,10 @@ class VARBaselineEffect(MuEffect):
     sensitive the results are to it: refit with a different
     ``baseline_innovation_sd``, such as half the default, and compare
     ``{prefix}::sigma_sd_0``, the likelihood's noise and the baseline equation's
-    coefficients. Halving it changes the baseline's innovation prior but not the
-    priors on the VAR's coefficients, such as the baseline's loadings on the brand
-    metrics, whose scale comes from the target.
+    coefficients. Halving it changes only the baseline's innovation prior. The priors
+    on the VAR's coefficients, such as the baseline's loadings on the brand metrics,
+    take their scale from the target, and so does the start of the baseline's path
+    unless the target does not vary.
 
     The brand metrics' likelihood and the constraint that keeps the baseline
     stationary are potentials, which prior and posterior predictive sampling ignore.
@@ -697,21 +704,20 @@ class VARBaselineEffect(MuEffect):
         mmm : MMM
             The MMM model instance.
         baseline_scale : float
-            The residual standard deviation of an AR(1) fit to the target, in the
+            U, the bound on the baseline's innovation standard deviation, in the
             target's original units.
 
         Returns
         -------
         float
             The target's standard deviation, in its original units. If that is not
-            positive and finite, ``baseline_scale / sqrt(1 - baseline_own_lag_mean**2)``
-            instead.
+            positive and finite, as for the all-zero target the MMM builds on when no
+            ``y`` is given, ``U / sqrt(1 - baseline_own_lag_mean**2)`` instead.
         """
         target_sd = float(np.std(mmm.xarray_dataset["_target"].to_numpy()))
-        # Data-derived, the target's sd is on the order of the baseline's marginal sd
-        # when the baseline is a component of the target. A scale from the target's
-        # AR(1) residual sd would leave out what the brand metrics pass into the
-        # baseline.
+        # Data-derived and independent of U, the target's sd is on the order of the
+        # baseline's marginal sd when the baseline is a component of the target. A
+        # scale from U would leave out what the brand metrics pass into the baseline.
         if np.isfinite(target_sd) and target_sd > 0:
             return target_sd
         return baseline_scale / np.sqrt(1 - self.baseline_own_lag_mean**2)
