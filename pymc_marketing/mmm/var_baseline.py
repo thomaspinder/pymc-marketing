@@ -399,21 +399,26 @@ class VARBaselineEffect(MuEffect):
         Raises
         ------
         ValueError
-            If the MMM has another ``VARBaselineEffect``, ``dims``, a time-varying
-            intercept or a link other than the identity, if ``brand_data`` cannot be
-            matched to the MMM's dates, or if a column named in ``endog_names`` or
-            ``exog_names`` has a NaN or infinite value on them or is constant on them.
+            If the MMM has more than one ``VARBaselineEffect``, ``dims``, a
+            time-varying intercept or a link other than the identity, if
+            ``brand_data`` cannot be matched to the MMM's dates, or if a column named
+            in ``endog_names`` or ``exog_names`` has a NaN or infinite value on them
+            or is constant on them.
         """
-        others = [
-            effect.prefix
-            for effect in mmm.mu_effects
-            if isinstance(effect, VARBaselineEffect) and effect is not self
+        effects = [
+            effect for effect in mmm.mu_effects if isinstance(effect, VARBaselineEffect)
         ]
-        if others:
+        if len(effects) > 1:
+            others = [effect.prefix for effect in effects if effect is not self]
+            found = (
+                f"found others with prefixes {others}. Put every brand series in one "
+                "VAR."
+                if others
+                else "but this one was added more than once. Add it once."
+            )
             raise ValueError(
                 f"VARBaselineEffect {self.prefix!r}: an MMM takes at most one "
-                f"VARBaselineEffect, found others with prefixes {others}. Put every "
-                "brand series in one VAR."
+                f"VARBaselineEffect, {found}"
             )
         if mmm.dims:
             raise ValueError(

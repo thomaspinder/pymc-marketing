@@ -702,14 +702,7 @@ def test_unsupported_mmm_raises_at_build(brand_mmm_data, mmm_kwargs, arrange, ma
             id="other-exog",
         ),
         pytest.param(
-            lambda effect, data: effect,
-            "added more than once",
-            id="same-instance",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="VARBaselineEffect does not refuse the same effect added twice "
-                "yet",
-            ),
+            lambda effect, data: effect, "added more than once", id="same-instance"
         ),
     ],
 )
