@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pymc as pm
+import pymc.dims as pmd
 import pytensor.tensor as pt
 import pytest
 import xarray as xr
@@ -2099,6 +2100,53 @@ def test_frozen_deterministics_include_the_mu_effects():
         *SoftPlusHSGP.deterministics_to_replace("intercept_latent_process"),
         "frozen_effect_contribution",
     ]
+
+
+class _FrozenPathEffect(_FrozenZeroEffect):
+    """A random walk over the model's dates, taken from the posterior."""
+
+    prefix: str = "path"
+
+    def create_effect(self, mmm):
+        """The walk, registered as the contribution."""
+        steps = pmd.Normal(f"{self.prefix}_steps", sigma=0.1, dims="date")
+        return pmd.Deterministic(self.contribution_var_name, steps.cumsum("date"))
+
+
+@pytest.mark.xfail(
+    strict=True, reason="Incrementality does not cut a frozen path to each window yet"
+)
+def test_monthly_incrementality_cuts_a_frozen_path(simple_mmm_data, mock_pymc_sample):
+    """A path frozen over the fitted dates is cut to each month's window.
+
+    It does not depend on spend, so it adds nothing to the increment. Without
+    carryover, each channel's increment on a month is its contribution summed over
+    that month, and the check that the increment is complete still passes.
+    """
+    X, y = simple_mmm_data["X"], simple_mmm_data["y"]
+    mmm = MMM(
+        date_column="date",
+        target_column="target",
+        channel_columns=["channel_1", "channel_2", "channel_3"],
+        adstock=GeometricAdstock(l_max=1),
+        saturation=LogisticSaturation(),
+    ).add_mu_effect(_FrozenPathEffect())
+    mmm.fit(X, y, draws=50, chains=1, random_seed=42)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*completeness", category=UserWarning)
+        incremental = mmm.incrementality.compute_incremental_contribution(
+            frequency="monthly"
+        )
+
+    contribution = (
+        mmm.idata.posterior["channel_contribution"]
+        * mmm.idata.constant_data["target_scale"]
+    )
+    month_ends = contribution.indexes["date"].to_period("M").end_time.normalize()
+    expected = contribution.assign_coords(date=month_ends).groupby("date").sum()
+    assert incremental.indexes["date"].equals(expected.indexes["date"])
+    np.testing.assert_allclose(incremental, expected.transpose(*incremental.dims))
 
 
 def test_sample_posterior_predictive_same_data_with_include_last_observations(

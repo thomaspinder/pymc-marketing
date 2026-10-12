@@ -230,6 +230,38 @@ class TestDateIndexedInputs:
         with pytest.raises(ValueError, match="entries along its 'date' dimension"):
             self._evaluator(("country", "date"), n_country=2, dates=self.dates[:4])
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason="CounterfactualEvaluator does not check frozen paths over dates yet",
+    )
+    def test_a_frozen_path_that_does_not_span_the_dates_is_refused(self):
+        """A frozen deterministic over ``date`` is cut like data, so checked like it."""
+        n_dates = len(self.dates)
+        with pm.Model(coords={"date": range(n_dates), "channel": ["c"]}) as model:
+            channel_data = pmd.Data(
+                "channel_data", np.ones((n_dates, 1)), dims=("date", "channel")
+            )
+            path = pmd.Deterministic(
+                "path", pmd.Normal("steps", dims="date").cumsum("date")
+            )
+            pmd.Deterministic("channel_contribution", channel_data + path)
+        posterior = xr.Dataset(
+            {"path": (("chain", "draw", "date"), np.zeros((1, 2, n_dates)))},
+            coords={"chain": [0], "draw": [0, 1]},
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Frozen deterministic 'path' has 6 entries along its 'date'",
+        ):
+            CounterfactualEvaluator(
+                pymc_model=model,
+                posterior=posterior,
+                response_vars=["channel_contribution"],
+                frozen_deterministics=["path"],
+                dates=self.dates[:4],
+            )
+
 
 def build_time_index_model(n_dates):
     """A minimal model whose graph actually reads ``time_index``.
