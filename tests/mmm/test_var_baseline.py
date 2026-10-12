@@ -15,10 +15,13 @@
 
 import subprocess
 import sys
+import tomllib
 from importlib import metadata
+from pathlib import Path
 from types import ModuleType
 
 import pytest
+from packaging.requirements import Requirement
 
 
 @pytest.mark.xfail(
@@ -51,6 +54,49 @@ def test_import_impulso_too_old_raises(monkeypatch):
     assert "impulso>=0.1.3" in message
     assert "0.0.14" in message
     assert "pip install -U 'pymc-marketing[var]'" in message
+    assert "Pre-releases" not in message
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="_import_impulso does not say that pre-releases of the minimum are "
+    "refused yet",
+)
+@pytest.mark.parametrize("installed", ["0.1.3.dev4", "0.1.3rc1"])
+def test_import_impulso_prerelease_of_the_minimum_raises(monkeypatch, installed):
+    """A pre-release of the minimum is refused, and the message says why.
+
+    An editable Impulso checkout versioned before the release was tagged is one.
+    """
+    from pymc_marketing.mmm.var_baseline import _import_impulso
+
+    monkeypatch.setitem(sys.modules, "impulso", ModuleType("impulso"))
+    monkeypatch.setattr(metadata, "version", lambda name: installed)
+
+    with pytest.raises(ImportError) as excinfo:
+        _import_impulso()
+
+    message = str(excinfo.value)
+    assert f"impulso {installed} is installed" in message
+    assert "Pre-releases of 0.1.3 are refused." in message
+    assert "pip install -U 'pymc-marketing[var]'" in message
+
+
+@pytest.mark.xfail(strict=True, reason="_MIN_IMPULSO does not exist yet")
+@pytest.mark.parametrize("extra", ["var", "test", "docs"])
+def test_min_impulso_matches_the_pins(extra):
+    """The runtime minimum is the lower bound every extra pins Impulso to."""
+    from pymc_marketing.mmm.var_baseline import _MIN_IMPULSO
+
+    pyproject = tomllib.loads(
+        (Path(__file__).parents[2] / "pyproject.toml").read_text()
+    )
+    requirements = map(
+        Requirement, pyproject["project"]["optional-dependencies"][extra]
+    )
+    (specifier,) = [r.specifier for r in requirements if r.name == "impulso"]
+
+    assert str(specifier) == f">={_MIN_IMPULSO}"
 
 
 @pytest.mark.xfail(
