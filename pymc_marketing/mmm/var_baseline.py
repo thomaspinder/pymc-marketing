@@ -280,13 +280,13 @@ class VARBaselineEffect(MuEffect):
     The baseline exists only on the dates the MMM is fitted on. On those dates,
     fitting, the contribution decomposition, the MMM's summaries, :meth:`fitted_var`
     and posterior predictive sampling work. Saving and loading the MMM work, and so
-    does posterior predictive sampling after loading. Channel incrementality works:
-    the baseline does not depend on spend, so it adds nothing to a channel's
-    increment. The budget optimizer runs on any window with the default objective,
-    which ignores the baseline, as it should: brand spend is an exogenous input of
-    the VAR, not a channel. An objective that includes the baseline, such as
-    ``response_variable="total_response_original_scale"``, raises a
-    ``NotImplementedError``. So do posterior predictive sampling and ``predict`` on
+    does posterior predictive sampling after loading. Channel incrementality works on
+    any window and frequency: the baseline does not depend on spend, so it adds
+    nothing to a channel's increment. The budget optimizer runs on any window with
+    the default objective, which ignores the baseline, as it should: brand spend is
+    an exogenous input of the VAR, not a channel. An objective that includes the
+    baseline, such as ``response_variable="total_response_original_scale"``, raises
+    a ``NotImplementedError``. So do posterior predictive sampling and ``predict`` on
     any other set of dates, including a subset of the fitted ones or with
     ``include_last_observations=True``, and time-slice cross-validation, which
     predicts on each fold's test dates.

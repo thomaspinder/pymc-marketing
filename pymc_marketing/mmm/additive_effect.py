@@ -536,6 +536,14 @@ class MuEffect(SerializableBaseModel, ABC):
         are. A frozen deterministic no longer responds to the channel data, so never
         freeze one that depends on them.
 
+        A frozen deterministic with a ``date`` dimension is a path over the fitted
+        dates. Posterior predictive sampling handles it on those dates, and
+        incrementality on any window, because the counterfactual evaluation cuts it
+        to each period's window as it cuts the data. The budget optimizer does not
+        cut it, so an effect that freezes one should set ``supports_new_dates`` to
+        ``False``. The MMM then refuses both prediction on other dates and any
+        budget objective that reaches the effect.
+
         Returns
         -------
         list[str]

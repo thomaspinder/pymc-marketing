@@ -1754,12 +1754,6 @@ def test_do_on_the_channel_data(fitted_mmm):
     assert f"{PREFIX}_effect_contribution" in model.named_vars
 
 
-WINDOW_NOT_CUT = pytest.mark.xfail(
-    strict=True,
-    reason="Incrementality does not cut the frozen baseline to each window yet",
-)
-
-
 def contribution_lost(mmm: MMM, X: pd.DataFrame, period: pd.Series) -> xr.DataArray:
     """Each channel's contribution lost without spend over ``period``.
 
@@ -1785,10 +1779,8 @@ def contribution_lost(mmm: MMM, X: pd.DataFrame, period: pd.Series) -> xr.DataAr
     "kwargs, frequency",
     [
         pytest.param({"frequency": "all_time"}, None, id="all-time"),
-        pytest.param({"frequency": "monthly"}, "M", id="monthly", marks=WINDOW_NOT_CUT),
-        pytest.param(
-            {"frequency": "quarterly"}, "Q", id="quarterly", marks=WINDOW_NOT_CUT
-        ),
+        pytest.param({"frequency": "monthly"}, "M", id="monthly"),
+        pytest.param({"frequency": "quarterly"}, "Q", id="quarterly"),
         pytest.param(
             {
                 "frequency": "all_time",
@@ -1797,7 +1789,6 @@ def contribution_lost(mmm: MMM, X: pd.DataFrame, period: pd.Series) -> xr.DataAr
             },
             None,
             id="window",
-            marks=WINDOW_NOT_CUT,
         ),
     ],
 )
@@ -1835,7 +1826,6 @@ def test_incremental_contribution_is_the_channel_contribution(
     xr.testing.assert_allclose(incremental, expected.transpose(*incremental.dims))
 
 
-@WINDOW_NOT_CUT
 @pytest.mark.parametrize("mmm_name", ["fitted_mmm", "loaded_mmm"])
 def test_monthly_contribution_over_spend(request, mmm_name):
     """Each channel's contribution per unit of spend is finite in each of 7 months."""

@@ -2110,9 +2110,6 @@ class _FrozenPathEffect(_FrozenZeroEffect):
         return pmd.Deterministic(self.contribution_var_name, steps.cumsum("date"))
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Incrementality does not cut a frozen path to each window yet"
-)
 def test_monthly_incrementality_cuts_a_frozen_path(simple_mmm_data, mock_pymc_sample):
     """A path frozen over the fitted dates is cut to each month's window.
 
