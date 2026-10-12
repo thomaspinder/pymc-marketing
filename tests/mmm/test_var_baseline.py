@@ -1655,6 +1655,7 @@ def test_mmm_with_events_of_the_same_prefix_saves_and_loads(brand_mmm_data, tmp_
     loaded_effect, loaded_events = MMM.load(str(tmp_path / "mmm.nc")).mu_effects
 
     assert loaded_effect == effect
+    # MMM == raises: EventAdditiveEffect reloads df_events with an extra `index` column.
     pd.testing.assert_frame_equal(loaded_events.df_events[df_events.columns], df_events)
 
 
