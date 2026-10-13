@@ -24,9 +24,6 @@ import pytest
 from packaging.requirements import Requirement
 
 
-@pytest.mark.xfail(
-    strict=True, reason="pymc_marketing.mmm.var_baseline is not implemented yet"
-)
 def test_import_impulso_missing_raises(monkeypatch):
     """Without Impulso, the error names the extra and the install command."""
     from pymc_marketing.mmm.var_baseline import _import_impulso
@@ -37,9 +34,6 @@ def test_import_impulso_missing_raises(monkeypatch):
         _import_impulso()
 
 
-@pytest.mark.xfail(
-    strict=True, reason="_import_impulso does not check Impulso's version yet"
-)
 def test_import_impulso_too_old_raises(monkeypatch):
     """An Impulso older than the minimum is refused with the upgrade command."""
     from pymc_marketing.mmm.var_baseline import _import_impulso
@@ -57,11 +51,6 @@ def test_import_impulso_too_old_raises(monkeypatch):
     assert "Pre-releases" not in message
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="_import_impulso does not say that pre-releases of the minimum are "
-    "refused yet",
-)
 @pytest.mark.parametrize("installed", ["0.1.3.dev4", "0.1.3rc1"])
 def test_import_impulso_prerelease_of_the_minimum_raises(monkeypatch, installed):
     """A pre-release of the minimum is refused, and the message says why.
@@ -82,7 +71,6 @@ def test_import_impulso_prerelease_of_the_minimum_raises(monkeypatch, installed)
     assert "pip install -U 'pymc-marketing[var]'" in message
 
 
-@pytest.mark.xfail(strict=True, reason="_MIN_IMPULSO does not exist yet")
 @pytest.mark.parametrize("extra", ["var", "test", "docs"])
 def test_min_impulso_matches_the_pins(extra):
     """The runtime minimum is the lower bound every extra pins Impulso to."""
@@ -99,9 +87,6 @@ def test_min_impulso_matches_the_pins(extra):
     assert str(specifier) == f">={_MIN_IMPULSO}"
 
 
-@pytest.mark.xfail(
-    strict=True, reason="pymc_marketing.mmm.var_baseline is not implemented yet"
-)
 def test_import_impulso_without_metadata_is_unchecked(monkeypatch):
     """An Impulso with no installed distribution, such as a source tree, is used."""
     from pymc_marketing.mmm.var_baseline import _import_impulso
@@ -116,9 +101,6 @@ def test_import_impulso_without_metadata_is_unchecked(monkeypatch):
     assert _import_impulso() is impulso
 
 
-@pytest.mark.xfail(
-    strict=True, reason="pymc_marketing.mmm.var_baseline is not implemented yet"
-)
 def test_pymc_marketing_imports_without_impulso():
     """Neither the package nor the effect's module needs Impulso at import time.
 
