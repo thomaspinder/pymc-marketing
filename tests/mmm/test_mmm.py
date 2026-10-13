@@ -2077,9 +2077,6 @@ def test_time_slice_cross_validation_refuses_an_effect_on_the_fitted_dates_only(
     assert fitted == []
 
 
-@pytest.mark.xfail(
-    strict=True, reason="MMM.frozen_deterministics does not ask the mu effects yet"
-)
 def test_frozen_deterministics_include_the_mu_effects():
     """An effect's names join the MMM's own, such as its HSGP intercept's."""
     mmm = (
@@ -2113,9 +2110,6 @@ class _FrozenPathEffect(_FrozenZeroEffect):
         return pmd.Deterministic(self.contribution_var_name, steps.cumsum("date"))
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Incrementality does not cut a frozen path to each window yet"
-)
 def test_monthly_incrementality_cuts_a_frozen_path(simple_mmm_data, mock_pymc_sample):
     """A path frozen over the fitted dates is cut to each month's window.
 

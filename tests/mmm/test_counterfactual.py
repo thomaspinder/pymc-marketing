@@ -230,10 +230,6 @@ class TestDateIndexedInputs:
         with pytest.raises(ValueError, match="entries along its 'date' dimension"):
             self._evaluator(("country", "date"), n_country=2, dates=self.dates[:4])
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="CounterfactualEvaluator does not check frozen paths over dates yet",
-    )
     def test_a_frozen_path_that_does_not_span_the_dates_is_refused(self):
         """A frozen deterministic over ``date`` is cut like data, so checked like it."""
         n_dates = len(self.dates)

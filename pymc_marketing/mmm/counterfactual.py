@@ -72,7 +72,7 @@ import xarray as xr
 from pandas.tseries.offsets import BaseOffset
 from pymc import do
 from pytensor import function
-from pytensor.graph.basic import Variable
+from pytensor.graph.basic import Constant, Variable
 from pytensor.graph.traversal import ancestors
 from pytensor.xtensor.vectorization import vectorize_graph
 
@@ -624,22 +624,25 @@ class EvaluationWindows:
 
 
 class DateIndexedInput(NamedTuple):
-    """A date-indexed ``pm.Data`` replaced by a batched evaluator input.
+    """A date-indexed input of the graph, replaced by a batched evaluator input.
+
+    Either a ``pm.Data`` or a frozen deterministic with a ``date`` dimension.
 
     Parameters
     ----------
     name : str
-        Name of the data variable in the model.
+        Name of the variable in the model.
     values : np.ndarray
         Its fitted values, in the model's own dimension order.  Read from the
         model's own shared variable rather than from ``fit_data``, because an
         effect's data need not appear there -- the funnel example builds the
         model from an ``xr.Dataset`` carrying the mediator's inputs, then fits
-        from a frame that does not.
+        from a frame that does not.  For a frozen deterministic, its posterior
+        draws, with ``sample`` first.
     dtype : str
         Dtype the compiled evaluator expects.
     dims : tuple of str
-        Its dimensions, in the model's order.
+        Its dimensions, in the order of :attr:`values`.
     date_axis : int
         Position of ``date`` within :attr:`dims`.  Stored rather than assumed to
         be zero: an effect is free to declare its data as ``("country", "date")``,
@@ -727,7 +730,9 @@ class CounterfactualEvaluator:
     date-indexed input in the graph has to be cut to the same window in lockstep,
     or the graph is handed a ``max_window``-long spend array and an
     ``n_dates``-long mediator array.  This class discovers those inputs from the
-    graph and cuts them itself.
+    graph and cuts them itself.  A frozen deterministic with a ``date`` dimension
+    is one of them: a path over the fitted dates, such as a latent baseline,
+    whose posterior draws are cut like data.
 
     Every result is transposed to ``(sample, date, *non_date_dims)`` before it
     is returned.  A node's own axis order is whatever the operations that built
@@ -749,6 +754,12 @@ class CounterfactualEvaluator:
         the linear predictor under an identity link.
     frozen_deterministics : list of str
         Deterministics to hold at their posterior values instead of recomputing.
+        One with a ``date`` dimension that the response variables read is fed in
+        as a batched input, keeping its ``sample`` axis: whole for the baseline,
+        and cut to each period's window for the counterfactuals.  Its ``date``
+        dimension has to span the fitted dates.  One without a ``date``
+        dimension, such as an HSGP's ``*_f_mean``, stays a constant in the
+        graph.
     dates : pd.DatetimeIndex
         Dates of the fitted data, used to validate the discovered inputs.
     intervention_target : str, default ``"channel_data"``
@@ -797,10 +808,10 @@ class CounterfactualEvaluator:
         If the intervention target does not exist, is a random variable, is
         frozen, is not of a floating dtype, or lacks a leading ``date``
         dimension; if no response variable depends on the target; if a
-        discovered date-indexed input does not span the fitted date axis; if
-        a response variable has no name (an anonymous node such as a raw
-        arithmetic expression, unless ``.name`` was set on it); if two
-        response variables share a name; or if a value in
+        discovered date-indexed input, data or frozen deterministic, does not
+        span the fitted date axis; if a response variable has no name (an
+        anonymous node such as a raw arithmetic expression, unless ``.name``
+        was set on it); if two response variables share a name; or if a value in
         *expected_aux_values* -- an auxiliary input, or the fabricated
         ``time_index`` -- disagrees with what the live model or the
         fabrication would produce, meaning the model was mutated after
@@ -975,6 +986,44 @@ class CounterfactualEvaluator:
                     name=data.name,
                     values=values,
                     dtype=data.dtype,
+                    dims=dims,
+                    date_axis=date_axis,
+                )
+            )
+
+        # A frozen deterministic reaches the graph as a constant of posterior
+        # draws.  One with a date dim is a path over the fitted dates, and has to
+        # be cut to each window like the data above.  Its draws come from the
+        # posterior rather than from the live model, so there is no fit-time
+        # value to check them against.
+        self._frozen: list[DateIndexedInput] = []
+        frozen_paths = self._frozen_date_paths(graph_ancestors, frozen_deterministics)
+        for name, frozen in frozen_paths.items():
+            dims = tuple(frozen.type.dims)
+            date_axis = dims.index("date")
+            if frozen.data.shape[date_axis] != len(dates):
+                raise ValueError(
+                    f"Frozen deterministic {name!r} has "
+                    f"{frozen.data.shape[date_axis]} entries along its 'date' "
+                    f"dimension but the fitted data has {len(dates)} dates.  "
+                    "Incrementality needs it to span the fitted date axis so it "
+                    "can be cut to a window alongside spend."
+                )
+            # Not _batched: the constant's static shape pins the date length to
+            # the fit's, which a window shorter than the fit would contradict.
+            batched = ptx.xtensor(
+                name=f"{name}_batched",
+                dtype=frozen.type.dtype,
+                shape=(None,) * (len(dims) + 1),
+                dims=(self.BATCH_DIM, *dims),
+            )
+            replace[frozen] = batched
+            func_inputs.append(batched)
+            self._frozen.append(
+                DateIndexedInput(
+                    name=name,
+                    values=frozen.data,
+                    dtype=frozen.type.dtype,
                     dims=dims,
                     date_axis=date_axis,
                 )
@@ -1336,6 +1385,40 @@ class CounterfactualEvaluator:
             and "date" in pymc_model.named_vars_to_dims.get(data.name, ())
         ]
 
+    @staticmethod
+    def _frozen_date_paths(
+        graph_ancestors: set, frozen_deterministics: list[str]
+    ) -> dict[str, Constant]:
+        """Find the frozen deterministics with a ``date`` dim that the graph reads.
+
+        :func:`extract_response_distribution` substitutes each frozen
+        deterministic by a constant of its posterior draws, named after it and
+        laid out ``("sample", *dims)``.
+
+        Parameters
+        ----------
+        graph_ancestors : set
+            Ancestors of the extracted response graphs.
+        frozen_deterministics : list of str
+            Names of the deterministics held at their posterior values.
+
+        Returns
+        -------
+        dict of str to Constant
+            The constants by name, in the order of *frozen_deterministics* so
+            that the compiled signature is deterministic.
+        """
+        constants = {
+            node.name: node
+            for node in graph_ancestors
+            if isinstance(node, Constant) and node.name in frozen_deterministics
+        }
+        return {
+            name: constants[name]
+            for name in frozen_deterministics
+            if name in constants and "date" in getattr(constants[name].type, "dims", ())
+        }
+
     def evaluate_baseline(self, target_values: np.ndarray) -> dict[str, np.ndarray]:
         """Evaluate every node on one set of intervention values, over the full date axis.
 
@@ -1357,7 +1440,10 @@ class CounterfactualEvaluator:
             args.append(
                 np.arange(len(target_values))[np.newaxis].astype(self.time_dtype)
             )
-        args.extend(aux.values[np.newaxis].astype(aux.dtype) for aux in self._aux)
+        args.extend(
+            aux.values[np.newaxis].astype(aux.dtype)
+            for aux in (*self._aux, *self._frozen)
+        )
         return {
             name: out[0]
             for name, out in zip(
@@ -1406,7 +1492,10 @@ class CounterfactualEvaluator:
         args: list[np.ndarray] = [scenarios.spend]
         if self.time_dtype is not None:
             args.append(windows.time_index(self.time_dtype)[scenarios.period_index])
-        args.extend(aux.cut(windows)[scenarios.period_index] for aux in self._aux)
+        args.extend(
+            aux.cut(windows)[scenarios.period_index]
+            for aux in (*self._aux, *self._frozen)
+        )
 
         n_scenarios = len(scenarios.spend)
         if batch_size is None:
